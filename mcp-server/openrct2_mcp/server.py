@@ -92,7 +92,12 @@ from openrct2_mcp.guest_intel import (
 from openrct2_mcp.land_tools import buy_land, clear_area, find_open_land, sell_land, terraform_region
 from openrct2_mcp.placement_tools import extend_queue, place_ride_at_best_tile
 from openrct2_mcp.ride_ops import (
+    DEFAULT_REFURBISH_MAX_WAIT_TICKS,
+    DEFAULT_REFURBISH_TICK_STEP,
+    DEFAULT_DOWNTIME_REFURBISH_THRESHOLD,
+    DEFAULT_RELIABILITY_REFURBISH_THRESHOLD,
     demolish_ride,
+    list_refurbish_candidates,
     optimize_ride_throughput,
     refurbish_ride,
     set_cars_per_train,
@@ -102,6 +107,12 @@ from openrct2_mcp.ride_ops import (
     set_ride_mode,
 )
 from openrct2_mcp.connection import SESSION, ConnectionError, ensure_paused, ensure_unpaused, game_context
+from openrct2_mcp.time_tools import (
+    advance_ticks_with_speed,
+    game_time_status,
+    parse_game_speed,
+    set_game_speed,
+)
 from openrct2_mcp.map_context import area_context
 from openrct2_mcp.map_region import (
     find_buildable_loop,
@@ -134,7 +145,7 @@ from openrct2_mcp.staff_tools import (
     set_staff_patrol,
 )
 from openrct2_mcp.vision import VisionCaptureError, capture_game_image
-from pyrct2._generated.enums import Direction, RideStatus, StaffType
+from pyrct2._generated.enums import Direction, GameSpeed, RideStatus, StaffType
 from pyrct2.objects import FootpathAdditions, RideObjects
 from pyrct2.world._tile import Tile
 
@@ -193,7 +204,6 @@ def openrct2_status() -> str:
     try:
         with game_context() as game:
             bridge_version = game.get_version().get("payload", {})
-            status = game.get_status().get("payload", {})
             ride_builder = SESSION.ride_builder
             rb_health = ride_builder.call("health")
             return _json(
@@ -201,7 +211,12 @@ def openrct2_status() -> str:
                     "connected": True,
                     "bridge_port": SESSION.bridge_port,
                     "bridge_version": bridge_version,
-                    "game_status": status,
+                    "game_status": game_time_status(
+                        game,
+                        known_speed=GameSpeed(SESSION.known_game_speed)
+                        if SESSION.known_game_speed is not None
+                        else None,
+                    ),
                     "ride_builder_port": ride_builder.port,
                     "ride_builder": rb_health,
                 }
@@ -322,6 +337,8 @@ def place_stall(
     """Place a stall beside a path tile (not on top of it).
 
     Provide path_x/path_y for the walkway tile the stall should face.
+    The path must be flat guest footpath on the entrance-connected network,
+    and the stall pad must already be flat land at the same height (no auto-terraform).
     Alternatively pass direction (NORTH/SOUTH/EAST/WEST) when placing on an
     already-correct adjacent layout.
     """
@@ -340,6 +357,19 @@ def place_stall(
         ride = game.rides.place_stall(obj, Tile(tile_x, tile_y), direction=facing)
         game.actions.ride_set_status(ride=ride.data.id, status=RideStatus.OPEN)
         return _json({"ride_id": ride.data.id, "name": ride.data.name, "direction": facing.name})
+
+
+@mcp.tool()
+def find_stall_sites_tool(
+    near_x: int | None = None,
+    near_y: int | None = None,
+    max_results: int = 10,
+) -> str:
+    """List valid stall pads beside flat, entrance-connected guest footpaths."""
+    with game_context() as game:
+        from openrct2_mcp.placement_tools import find_stall_sites
+
+        return _json(find_stall_sites(game, near_x=near_x, near_y=near_y, max_results=max_results))
 
 
 @mcp.tool()
@@ -550,16 +580,60 @@ def set_park_settings(
 
 
 @mcp.tool()
-def advance_time(ticks: int, unpause_after: bool = False) -> str:
-    """Advance the game by N ticks. Game is paused again unless unpause_after is true."""
+def advance_time(
+    ticks: int,
+    unpause_after: bool = False,
+    boost_speed: bool = True,
+    boost_to: str = "fastest",
+    restore_to: str | None = None,
+) -> str:
+    """Advance the game by N ticks. Game is paused again unless unpause_after is true.
+
+    By default temporarily sets game speed to fastest while advancing, then restores
+    the previous MCP-tracked speed or normal.
+    """
     with game_context() as game:
-        game.advance_ticks(max(1, ticks))
+        restore = parse_game_speed(restore_to) if restore_to is not None else None
+        if restore is None and SESSION.known_game_speed is not None:
+            restore = GameSpeed(SESSION.known_game_speed)
+        elif restore is None:
+            restore = GameSpeed.NORMAL
+        result = advance_ticks_with_speed(
+            game,
+            max(1, ticks),
+            boost_speed=boost_speed,
+            boost_to=parse_game_speed(boost_to, default=GameSpeed.FASTEST),
+            restore_to=restore,
+        )
+        SESSION.remember_game_speed(int(restore))
         if unpause_after:
             game.unpause()
         else:
             ensure_paused(game)
-        status = game.get_status().get("payload", {})
-        return _json({"advanced_ticks": ticks, "status": status})
+        result["status"] = game_time_status(
+            game,
+            known_speed=GameSpeed(SESSION.known_game_speed)
+            if SESSION.known_game_speed is not None
+            else None,
+        )
+        return _json(result)
+
+
+@mcp.tool()
+def set_game_speed_tool(speed: str = "normal") -> str:
+    """Set OpenRCT2 simulation speed (normal, fast, faster, fastest)."""
+    with game_context() as game:
+        ensure_paused(game)
+        target = parse_game_speed(speed)
+        set_game_speed(game, target)
+        SESSION.remember_game_speed(int(target))
+        return _json(
+            {
+                "game_speed": int(target),
+                "game_speed_label": speed.strip().lower(),
+                "note": "OpenRCT2 does not expose the current speed to plugins; MCP tracks the last speed it set.",
+            }
+        )
 
 
 @mcp.tool()
@@ -1685,28 +1759,63 @@ def refurbish_ride_tool(
     ride_id: int,
     close_first: bool = True,
     wait_for_empty: bool = True,
-    max_wait_ticks: int = 4800,
+    max_wait_ticks: int = DEFAULT_REFURBISH_MAX_WAIT_TICKS,
+    tick_step: int = DEFAULT_REFURBISH_TICK_STEP,
     open_after: bool = False,
+    boost_speed: bool = True,
+    boost_to: str = "fastest",
+    restore_to: str | None = None,
 ) -> str:
     """Renew/refurbish a ride (resets age, reliability, and crash state).
 
     Prefer this over demolishing or slashing prices when a ride is old, unreliable,
     or stuck in breakdown. The ride must be closed and empty; by default this tool
-    closes it first and advances time until guests clear.
+    closes it first and fast-forwards time (1 in-game day per step, up to 14 days)
+    until guests clear. While waiting, game speed is temporarily boosted to clear
+    guests faster, then restored.
     """
     with game_context() as game:
+        restore = parse_game_speed(restore_to) if restore_to is not None else None
         result = refurbish_ride(
             game,
             ride_id,
             close_first=close_first,
             wait_for_empty=wait_for_empty,
             max_wait_ticks=max_wait_ticks,
+            tick_step=tick_step,
+            boost_speed=boost_speed,
+            boost_to=parse_game_speed(boost_to, default=GameSpeed.FASTEST),
+            restore_to=restore,
         )
         if open_after:
             ensure_paused(game)
             game.actions.ride_set_status(ride=ride_id, status=RideStatus.OPEN)
             result["status"] = "open"
         log_action("refurbish_ride", {"ride_id": ride_id, "cost": result.get("cost")})
+        return _json(result)
+
+
+@mcp.tool()
+def list_refurbish_candidates_tool(
+    limit: int = 20,
+    reliability_threshold: float = DEFAULT_RELIABILITY_REFURBISH_THRESHOLD,
+    downtime_threshold: float = DEFAULT_DOWNTIME_REFURBISH_THRESHOLD,
+    rides_only: bool = True,
+) -> str:
+    """List rides that need refurbish, ranked by downtime AND reliability.
+
+    Matches the ride Maintenance tab: flag rides with high downtime, low reliability,
+    or an active breakdown. Use before refurbish_ride_tool to pick targets.
+    """
+    with game_context() as game:
+        result = list_refurbish_candidates(
+            game,
+            SESSION.ride_builder,
+            limit=limit,
+            reliability_threshold=reliability_threshold,
+            downtime_threshold=downtime_threshold,
+            rides_only=rides_only,
+        )
         return _json(result)
 
 

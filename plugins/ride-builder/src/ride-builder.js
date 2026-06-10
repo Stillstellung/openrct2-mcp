@@ -125,6 +125,8 @@ function main() {
         ["startRideTest",        params => handleStartRideTest(params)],
         ["testRide",             params => handleStartRideTest(params)],
         ["getRideStats",         params => handleGetRideStats(params)],
+        ["getRideMaintenance",   params => handleGetRideMaintenance(params)],
+        ["listRideMaintenance",  () => handleListRideMaintenance()],
         ["placeTrackPiece",      params => handlePlaceTrackPiece(params)],
         ["getValidNextPieces",   params => handleGetValidNextPieces(params)],
         ["placeEntranceExit",    params => handlePlaceEntranceExit(params)],
@@ -191,6 +193,35 @@ function main() {
         return context.getAllTrackSegments().map(serializeTrackSegment);
     }
 
+    function readReliabilityPercent(ride) {
+        const keys = ["reliability", "reliabilityPercentage", "reliability_percentage"];
+        for (let i = 0; i < keys.length; i++) {
+            const value = ride[keys[i]];
+            if (typeof value === "number" && Number.isFinite(value)) {
+                return value <= 100 ? value : Math.round(value / 655.35);
+            }
+        }
+        return null;
+    }
+
+    function serializeRideMaintenance(ride) {
+        const breakdown = ride.breakdown;
+        const breakdownLabel = breakdown == null ? "none" : String(breakdown).toLowerCase();
+        return {
+            rideId: ride.id,
+            name: ride.name,
+            classification: ride.classification,
+            status: ride.status,
+            downtime: ride.downtime,
+            reliability: readReliabilityPercent(ride),
+            age: ride.age,
+            breakdown: breakdown,
+            activeBreakdown: breakdownLabel !== "none" && breakdownLabel !== "" && breakdownLabel !== "0",
+            satisfaction: ride.satisfaction,
+            inspectionInterval: ride.inspectionInterval,
+        };
+    }
+
     async function handleGetRideStats(params) {
         const { rideId } = params || {};
         if (typeof rideId !== "number") throw new Error("Missing or invalid parameter: rideId");
@@ -201,6 +232,23 @@ function main() {
             intensity: ride.intensity / 100,
             nausea: ride.nausea / 100,
         };
+    }
+
+    async function handleGetRideMaintenance(params) {
+        const { rideId } = params || {};
+        if (typeof rideId !== "number") throw new Error("Missing or invalid parameter: rideId");
+        const ride = map.getRide(rideId);
+        if (!ride) throw new Error("Ride not found");
+        return serializeRideMaintenance(ride);
+    }
+
+    async function handleListRideMaintenance() {
+        const rows = [];
+        map.rides.forEach(ride => {
+            rows.push(serializeRideMaintenance(ride));
+        });
+        rows.sort((a, b) => (b.downtime || 0) - (a.downtime || 0));
+        return rows;
     }
 
     async function handleStartRideTest(params) {

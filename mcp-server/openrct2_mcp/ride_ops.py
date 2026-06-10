@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from pyrct2._generated.enums import RideInspection, RideMode, RideModifyType, RideSetSetting, RideSetVehicleType
+from pyrct2._generated.enums import GameSpeed, RideInspection, RideMode, RideModifyType, RideSetSetting, RideSetVehicleType, RideStatus
 from pyrct2.client import RCT2
 from pyrct2.errors import ActionError, ActionStatus
 from pyrct2.result import ActionResult
 
-from openrct2_mcp.bridge_fast import get_ride_raw, list_rides_fast
-from openrct2_mcp.connection import RideBuilderClient, ensure_paused, ensure_unpaused
+from openrct2_mcp.bridge_fast import get_ride_raw, list_rides_fast, ride_maintenance_from_raw
+from openrct2_mcp.connection import RideBuilderClient, SESSION, ensure_paused
+from openrct2_mcp.time_tools import advance_ticks_with_speed, game_speed_label
 
 INSPECTION_MINUTES: dict[int, RideInspection] = {
     10: RideInspection.EVERY10_MINUTES,
@@ -20,6 +21,11 @@ INSPECTION_MINUTES: dict[int, RideInspection] = {
     60: RideInspection.EVERY_HOUR,
     120: RideInspection.EVERY2_HOURS,
 }
+
+# OpenRCT2 advances 8192 ticks per in-game day (65536 ticks / 8-day month).
+TICKS_PER_DAY = 8192
+DEFAULT_REFURBISH_MAX_WAIT_TICKS = TICKS_PER_DAY * 14
+DEFAULT_REFURBISH_TICK_STEP = TICKS_PER_DAY
 
 
 def _ride_entity(game: RCT2, ride_id: int):
@@ -86,6 +92,12 @@ def ride_status_is_open(status: object) -> bool:
     return label in ("open", "ride_status.open", "1")
 
 
+def _close_ride(game: RCT2, ride_id: int) -> None:
+    """Close a ride without loading the full pyrct2 Ride model (avoids bridge validation quirks)."""
+    ensure_paused(game)
+    game.actions.ride_set_status(ride=ride_id, status=RideStatus.CLOSED)
+
+
 def _execute_refurbish(game: RCT2, ride_id: int) -> ActionResult:
     """Renew/refurbish a ride (resets age, reliability, crash state). Ride must be closed and empty."""
     ensure_paused(game)
@@ -97,34 +109,69 @@ def _execute_refurbish(game: RCT2, ride_id: int) -> ActionResult:
     )
 
 
+def refurbish_blocked_by_guests(exc: ActionError) -> bool:
+    """True when refurbish failed because guests/vehicles are still on the ride."""
+    if exc.status == ActionStatus.INSUFFICIENT_FUNDS:
+        return False
+    message = str(exc.message or "").lower()
+    return exc.status == ActionStatus.DISALLOWED or "empty" in message
+
+
+def _fast_forward(
+    game: RCT2,
+    ticks: int,
+    *,
+    boost_speed: bool = True,
+    boost_to: GameSpeed = GameSpeed.FASTEST,
+    restore_to: GameSpeed | None = None,
+) -> dict[str, Any]:
+    restore = restore_to
+    if restore is None:
+        known = SESSION.known_game_speed
+        restore = GameSpeed(known) if known is not None else GameSpeed.NORMAL
+    info = advance_ticks_with_speed(
+        game,
+        ticks,
+        boost_speed=boost_speed,
+        boost_to=boost_to,
+        restore_to=restore,
+    )
+    SESSION.remember_game_speed(int(restore))
+    return info
+
+
 def refurbish_ride(
     game: RCT2,
     ride_id: int,
     *,
     close_first: bool = True,
     wait_for_empty: bool = True,
-    max_wait_ticks: int = 4800,
-    tick_step: int = 160,
+    max_wait_ticks: int = DEFAULT_REFURBISH_MAX_WAIT_TICKS,
+    tick_step: int = DEFAULT_REFURBISH_TICK_STEP,
+    boost_speed: bool = True,
+    boost_to: GameSpeed = GameSpeed.FASTEST,
+    restore_to: GameSpeed | None = None,
 ) -> dict[str, Any]:
-    """Close if needed, optionally wait for guests to leave, then renew the ride."""
+    """Close if needed, fast-forward until empty, then renew the ride."""
     raw = get_ride_raw(game, ride_id)
     if raw is None:
         raise ValueError(f"Ride {ride_id} not found")
 
     steps: list[str] = []
     if close_first and ride_status_is_open(raw.get("status")):
-        _ride_entity(game, ride_id).close()
+        _close_ride(game, ride_id)
         steps.append("closed")
 
     waited_ticks = 0
     last_error: ActionError | None = None
+    speed_steps: list[str] = []
 
     def _attempt() -> ActionResult:
         try:
             return _execute_refurbish(game, ride_id)
         except ActionError as exc:
             if exc.status == ActionStatus.NOT_CLOSED and close_first:
-                _ride_entity(game, ride_id).close()
+                _close_ride(game, ride_id)
                 if "closed" not in steps:
                     steps.append("closed")
                 return _execute_refurbish(game, ride_id)
@@ -143,6 +190,9 @@ def refurbish_ride(
     while waited_ticks <= max_wait_ticks:
         try:
             result = _attempt()
+            if waited_ticks:
+                steps.append(f"fast_forwarded_{waited_ticks}_ticks")
+            steps.extend(speed_steps)
             return {
                 "ride_id": ride_id,
                 "refurbished": True,
@@ -156,18 +206,204 @@ def refurbish_ride(
                 raise ValueError(
                     f"Not enough cash to refurbish ride {ride_id} (estimated cost {exc.cost})."
                 ) from exc
+            if not refurbish_blocked_by_guests(exc):
+                raise ValueError(
+                    f"Could not refurbish ride {ride_id}: {exc}"
+                ) from exc
             if waited_ticks >= max_wait_ticks:
                 break
-            ensure_unpaused(game)
-            game.advance_ticks(max(1, tick_step))
+            speed_info = _fast_forward(
+                game,
+                tick_step,
+                boost_speed=boost_speed,
+                boost_to=boost_to,
+                restore_to=restore_to,
+            )
+            if boost_speed and not speed_steps:
+                speed_steps.append(
+                    f"fast_forward_speed_{speed_info.get('boosted_to', game_speed_label(boost_to))}"
+                )
             waited_ticks += tick_step
-            ensure_paused(game)
 
     detail = str(last_error) if last_error else "unknown error"
     raise ValueError(
-        f"Could not refurbish ride {ride_id} after waiting {waited_ticks} ticks "
-        f"(ride must be closed and empty). Last error: {detail}"
+        f"Could not refurbish ride {ride_id} after fast-forwarding {waited_ticks} ticks "
+        f"(~{waited_ticks // TICKS_PER_DAY} in-game days; ride must be closed and empty). "
+        f"Last error: {detail}"
     )
+
+
+DEFAULT_RELIABILITY_REFURBISH_THRESHOLD = 85.0
+DEFAULT_DOWNTIME_REFURBISH_THRESHOLD = 8.0
+
+
+def _merge_maintenance(
+    maintenance: dict[str, Any],
+    ride_builder_row: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Prefer ride-builder maintenance stats when the bridge omits reliability."""
+    merged = dict(maintenance)
+    if ride_builder_row is None:
+        return merged
+    for key, rb_key in (
+        ("downtime", "downtime"),
+        ("reliability", "reliability"),
+        ("age_months", "age"),
+        ("breakdown", "breakdown"),
+    ):
+        if merged.get(key) is None and ride_builder_row.get(rb_key) is not None:
+            merged[key] = ride_builder_row.get(rb_key)
+    if ride_builder_row.get("activeBreakdown"):
+        merged["active_breakdown"] = True
+    return merged
+
+
+def refurbish_need_score(
+    maintenance: dict[str, Any],
+    *,
+    reliability_threshold: float = DEFAULT_RELIABILITY_REFURBISH_THRESHOLD,
+    downtime_threshold: float = DEFAULT_DOWNTIME_REFURBISH_THRESHOLD,
+) -> tuple[float, list[str]]:
+    """Rank refurbish urgency using downtime and reliability (maintenance tab metrics)."""
+    reasons: list[str] = []
+    score = 0.0
+
+    if maintenance.get("active_breakdown"):
+        score += 1000.0
+        reasons.append(f"active breakdown: {maintenance.get('breakdown')}")
+
+    downtime = float(maintenance.get("downtime") or 0.0)
+    if downtime >= downtime_threshold:
+        score += downtime * 4.0
+        reasons.append(f"downtime {downtime:.0f}%")
+    elif downtime > 0:
+        score += downtime * 2.0
+        reasons.append(f"downtime {downtime:.0f}%")
+
+    reliability = maintenance.get("reliability")
+    if reliability is not None:
+        reliability = float(reliability)
+        if reliability < reliability_threshold:
+            score += (100.0 - reliability) * 3.0
+            reasons.append(f"reliability {reliability:.0f}%")
+    elif downtime < downtime_threshold and not maintenance.get("active_breakdown"):
+        reasons.append("reliability unavailable (OpenRCT2 plugin API)")
+
+    age = maintenance.get("age_months")
+    if age is not None and float(age) >= 84 and reliability is None:
+        score += min(30.0, float(age) / 4.0)
+        reasons.append(f"age {int(age)} months")
+
+    return score, reasons
+
+
+def recommend_refurbish(
+    maintenance: dict[str, Any],
+    *,
+    reliability_threshold: float = DEFAULT_RELIABILITY_REFURBISH_THRESHOLD,
+    downtime_threshold: float = DEFAULT_DOWNTIME_REFURBISH_THRESHOLD,
+) -> bool:
+    """True when downtime or reliability crosses refurbish thresholds."""
+    if maintenance.get("active_breakdown"):
+        return True
+    downtime = float(maintenance.get("downtime") or 0.0)
+    if downtime >= downtime_threshold:
+        return True
+    reliability = maintenance.get("reliability")
+    if reliability is not None and float(reliability) < reliability_threshold:
+        return True
+    return False
+
+
+def _load_ride_builder_maintenance(ride_builder: RideBuilderClient) -> dict[int, dict[str, Any]]:
+    try:
+        rows = ride_builder.call("listRideMaintenance")
+    except Exception:
+        return {}
+    if not isinstance(rows, list):
+        return {}
+    by_id: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        if isinstance(row, dict) and isinstance(row.get("rideId"), int):
+            by_id[row["rideId"]] = row
+    return by_id
+
+
+def list_refurbish_candidates(
+    game: RCT2,
+    ride_builder: RideBuilderClient,
+    *,
+    limit: int = 20,
+    reliability_threshold: float = DEFAULT_RELIABILITY_REFURBISH_THRESHOLD,
+    downtime_threshold: float = DEFAULT_DOWNTIME_REFURBISH_THRESHOLD,
+    rides_only: bool = True,
+) -> dict[str, Any]:
+    """List rides ranked for refurbish using downtime and reliability together."""
+    rb_rows = _load_ride_builder_maintenance(ride_builder)
+    reliability_available = any(row.get("reliability") is not None for row in rb_rows.values())
+
+    candidates: list[dict[str, Any]] = []
+    for summary in list_rides_fast(game, ride_builder):
+        classification = str(summary.get("classification") or "").lower()
+        if rides_only and classification in ("stall", "facility"):
+            continue
+
+        ride_id = summary["id"]
+        raw = get_ride_raw(game, ride_id) or {}
+        maintenance = _merge_maintenance(
+            ride_maintenance_from_raw(raw),
+            rb_rows.get(ride_id),
+        )
+        score, reasons = refurbish_need_score(
+            maintenance,
+            reliability_threshold=reliability_threshold,
+            downtime_threshold=downtime_threshold,
+        )
+        if score <= 0:
+            continue
+
+        candidates.append(
+            {
+                "ride_id": ride_id,
+                "name": summary.get("name"),
+                "score": round(score, 1),
+                "recommend_refurbish": recommend_refurbish(
+                    maintenance,
+                    reliability_threshold=reliability_threshold,
+                    downtime_threshold=downtime_threshold,
+                ),
+                "downtime": maintenance.get("downtime"),
+                "reliability": maintenance.get("reliability"),
+                "age_months": maintenance.get("age_months"),
+                "breakdown": maintenance.get("breakdown"),
+                "reasons": reasons,
+            }
+        )
+
+    candidates.sort(key=lambda row: (-row["score"], row.get("name") or ""))
+    if limit > 0:
+        candidates = candidates[:limit]
+
+    note = (
+        "Candidates are ranked using downtime and reliability together (matching the ride maintenance tab). "
+        "Reliability is read when the OpenRCT2 plugin API exposes it; until then only downtime/breakdown/age "
+        "signals are available programmatically."
+    )
+    if not reliability_available:
+        note += (
+            " Reliability is not exposed to plugins in current OpenRCT2 builds, so rides like "
+            "low-reliability / zero-downtime coasters may be under-ranked until upstream adds ride.reliability."
+        )
+
+    return {
+        "candidates": candidates,
+        "reliability_available": reliability_available,
+        "thresholds": {
+            "reliability_below": reliability_threshold,
+            "downtime_at_least": downtime_threshold,
+        },
+        "note": note,
+    }
 
 
 def _throughput_score(raw: dict) -> float:

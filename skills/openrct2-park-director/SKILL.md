@@ -161,6 +161,7 @@ study or place with `coaster_fit_design_tool`. Corpus-derived rules:
 - Only delete agent-created shells: `coaster_cleanup_session_rides` or `coaster_delete(ride_id, confirm_destructive=true)` on a known `ride_id`
 - Never demolish existing park rides without explicit user approval
 - Prefer `refurbish_ride_tool` for old, unreliable, or breakdown-stuck rides before demolishing or cutting prices
+- Use `list_refurbish_candidates_tool` to rank targets by **downtime and reliability** (same metrics as the ride Maintenance tab)
 - Use `confirm_destructive=true` for `demolish_ride_tool`, `coaster_delete`, `clear_area_tool`
 - Coaster track placement requires **unpaused** game (coaster tools handle this)
 - Park mutations (paths, scenery, staff) use **paused** game
