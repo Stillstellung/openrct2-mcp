@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from pyrct2._generated.enums import RideInspection, RideMode, RideSetSetting, RideSetVehicleType
+from pyrct2._generated.enums import RideInspection, RideMode, RideModifyType, RideSetSetting, RideSetVehicleType
 from pyrct2.client import RCT2
+from pyrct2.errors import ActionError, ActionStatus
+from pyrct2.result import ActionResult
 
 from openrct2_mcp.bridge_fast import get_ride_raw, list_rides_fast
-from openrct2_mcp.connection import RideBuilderClient
+from openrct2_mcp.connection import RideBuilderClient, ensure_paused, ensure_unpaused
 
 INSPECTION_MINUTES: dict[int, RideInspection] = {
     10: RideInspection.EVERY10_MINUTES,
@@ -76,6 +78,96 @@ def set_ride_colour_scheme(game: RCT2, ride_id: int, appearance_type: int, colou
 def demolish_ride(game: RCT2, ride_id: int) -> dict:
     _ride_entity(game, ride_id).demolish()
     return {"demolished": True, "ride_id": ride_id}
+
+
+def ride_status_is_open(status: object) -> bool:
+    """Return True when bridge/pyrct2 status indicates the ride is open."""
+    label = str(status or "").lower()
+    return label in ("open", "ride_status.open", "1")
+
+
+def _execute_refurbish(game: RCT2, ride_id: int) -> ActionResult:
+    """Renew/refurbish a ride (resets age, reliability, crash state). Ride must be closed and empty."""
+    ensure_paused(game)
+    return ActionResult.from_response(
+        game.actions.ride_demolish(
+            ride=ride_id,
+            modify_type=RideModifyType.RENEW,
+        )
+    )
+
+
+def refurbish_ride(
+    game: RCT2,
+    ride_id: int,
+    *,
+    close_first: bool = True,
+    wait_for_empty: bool = True,
+    max_wait_ticks: int = 4800,
+    tick_step: int = 160,
+) -> dict[str, Any]:
+    """Close if needed, optionally wait for guests to leave, then renew the ride."""
+    raw = get_ride_raw(game, ride_id)
+    if raw is None:
+        raise ValueError(f"Ride {ride_id} not found")
+
+    steps: list[str] = []
+    if close_first and ride_status_is_open(raw.get("status")):
+        _ride_entity(game, ride_id).close()
+        steps.append("closed")
+
+    waited_ticks = 0
+    last_error: ActionError | None = None
+
+    def _attempt() -> ActionResult:
+        try:
+            return _execute_refurbish(game, ride_id)
+        except ActionError as exc:
+            if exc.status == ActionStatus.NOT_CLOSED and close_first:
+                _ride_entity(game, ride_id).close()
+                if "closed" not in steps:
+                    steps.append("closed")
+                return _execute_refurbish(game, ride_id)
+            raise
+
+    if not wait_for_empty:
+        result = _attempt()
+        return {
+            "ride_id": ride_id,
+            "refurbished": True,
+            "cost": result.cost,
+            "waited_ticks": 0,
+            "steps": steps,
+        }
+
+    while waited_ticks <= max_wait_ticks:
+        try:
+            result = _attempt()
+            return {
+                "ride_id": ride_id,
+                "refurbished": True,
+                "cost": result.cost,
+                "waited_ticks": waited_ticks,
+                "steps": steps,
+            }
+        except ActionError as exc:
+            last_error = exc
+            if exc.status == ActionStatus.INSUFFICIENT_FUNDS:
+                raise ValueError(
+                    f"Not enough cash to refurbish ride {ride_id} (estimated cost {exc.cost})."
+                ) from exc
+            if waited_ticks >= max_wait_ticks:
+                break
+            ensure_unpaused(game)
+            game.advance_ticks(max(1, tick_step))
+            waited_ticks += tick_step
+            ensure_paused(game)
+
+    detail = str(last_error) if last_error else "unknown error"
+    raise ValueError(
+        f"Could not refurbish ride {ride_id} after waiting {waited_ticks} ticks "
+        f"(ride must be closed and empty). Last error: {detail}"
+    )
 
 
 def _throughput_score(raw: dict) -> float:

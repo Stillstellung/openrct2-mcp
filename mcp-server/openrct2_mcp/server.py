@@ -94,6 +94,7 @@ from openrct2_mcp.placement_tools import extend_queue, place_ride_at_best_tile
 from openrct2_mcp.ride_ops import (
     demolish_ride,
     optimize_ride_throughput,
+    refurbish_ride,
     set_cars_per_train,
     set_num_trains,
     set_ride_colour_scheme,
@@ -1677,6 +1678,36 @@ def optimize_ride_throughput_tool(
                 dry_run=dry_run,
             )
         )
+
+
+@mcp.tool()
+def refurbish_ride_tool(
+    ride_id: int,
+    close_first: bool = True,
+    wait_for_empty: bool = True,
+    max_wait_ticks: int = 4800,
+    open_after: bool = False,
+) -> str:
+    """Renew/refurbish a ride (resets age, reliability, and crash state).
+
+    Prefer this over demolishing or slashing prices when a ride is old, unreliable,
+    or stuck in breakdown. The ride must be closed and empty; by default this tool
+    closes it first and advances time until guests clear.
+    """
+    with game_context() as game:
+        result = refurbish_ride(
+            game,
+            ride_id,
+            close_first=close_first,
+            wait_for_empty=wait_for_empty,
+            max_wait_ticks=max_wait_ticks,
+        )
+        if open_after:
+            ensure_paused(game)
+            game.actions.ride_set_status(ride=ride_id, status=RideStatus.OPEN)
+            result["status"] = "open"
+        log_action("refurbish_ride", {"ride_id": ride_id, "cost": result.get("cost")})
+        return _json(result)
 
 
 @mcp.tool()

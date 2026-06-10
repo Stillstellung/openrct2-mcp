@@ -89,6 +89,7 @@ Cursor AI  --MCP-->  Python MCP server  --TCP-->  openrct2-bridge (park ops)
 | `apply_theme_preset_tool` | Theme along paths (see `themes/cute.json`) |
 | `place_small_scenery_tool` / `paint_terrain_tool` | Decoration and terrain |
 | `set_ride_price` / `open_ride` / `close_ride` | Ride operations |
+| `refurbish_ride_tool` | Renew a ride (resets age/reliability; closes and waits for guests by default) |
 | `set_park_settings` | Entrance fee, open/close park |
 | `advance_time` | Step simulation ticks |
 | `get_research` | Research state |
