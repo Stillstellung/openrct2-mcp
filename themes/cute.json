@@ -1,0 +1,10 @@
+{
+  "name": "cute",
+  "description": "Pastel flowers, benches, bins, and soft grass along main paths",
+  "bench_identifier": null,
+  "bin_identifier": null,
+  "flower_identifier": "FLWRSSM1",
+  "flower_colour": 24,
+  "grass_surface_style": 0,
+  "edge_style": 0
+}

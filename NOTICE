@@ -1,0 +1,18 @@
+OpenRCT2 MCP — Third-Party Notices
+====================================
+
+This project includes or depends on the following third-party components.
+
+Ride-builder plugin
+-------------------
+The ride-builder OpenRCT2 plugin in `plugins/ride-builder/` is derived from
+openrct2-ridecreation-api:
+
+  https://github.com/markusklock/openrct2-ridecreation-api
+
+Runtime dependencies
+--------------------
+- openrct2-bridge — https://github.com/MaukWM/openrct2-bridge
+- pyrct2 — https://pypi.org/project/pyrct2/
+
+See each project's license for terms governing those components.

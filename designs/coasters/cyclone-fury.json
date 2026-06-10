@@ -1,0 +1,307 @@
+{
+ "template_version": 1,
+ "name": "Cyclone Fury",
+ "slug": "cyclone-fury",
+ "notes": "Twister: +20 chained lift, -18 drop into vertical loop then corkscrew pair, banked 180 return. Energy rule: loop+corkscrew need ~18+ tiles of drop before them (v1 with +16 lift stalled).",
+ "prompt": "cool random more exciting custom ride - twister with vertical loop + corkscrew",
+ "mood": "intense",
+ "ratings": {
+  "excitement": 5.92,
+  "intensity": 5.83,
+  "nausea": 2.93
+ },
+ "validated": true,
+ "lint_ok": true,
+ "stats": {
+  "piece_count": 82,
+  "station_pieces": 5,
+  "footprint_bbox": [
+   -3,
+   0,
+   38,
+   7
+  ],
+  "footprint_size": [
+   42,
+   8
+  ],
+  "max_z_above_station": 20,
+  "peak_piece_index": 14,
+  "endpoint": {
+   "x": 0,
+   "y": 0,
+   "z": 0,
+   "direction": 2
+  }
+ },
+ "created_at": "2026-06-09T14:25:21",
+ "design": {
+  "version": 1,
+  "ride_type": 51,
+  "pieces": [
+   {
+    "track_type": 2
+   },
+   {
+    "track_type": 3
+   },
+   {
+    "track_type": 3
+   },
+   {
+    "track_type": 3
+   },
+   {
+    "track_type": 6,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 9,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 12
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 15
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 6
+   },
+   {
+    "track_type": 40
+   },
+   {
+    "track_type": 15
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 58
+   },
+   {
+    "track_type": 61
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 18
+   },
+   {
+    "track_type": 44
+   },
+   {
+    "track_type": 44
+   },
+   {
+    "track_type": 20
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 12
+   },
+   {
+    "track_type": 15
+   },
+   {
+    "track_type": 42
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 42
+   },
+   {
+    "track_type": 1
+   }
+  ],
+  "origin": {
+   "x": 0,
+   "y": 0,
+   "z": 0,
+   "direction": 2
+  }
+ }
+}

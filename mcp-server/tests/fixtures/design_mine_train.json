@@ -1,0 +1,1099 @@
+{
+ "version": 1,
+ "name": "Mine Train Coaster 1",
+ "ride_type": 17,
+ "ride_object": 0,
+ "colour1": 0,
+ "colour2": 0,
+ "origin": {
+  "x": 107,
+  "y": 64,
+  "z": 18,
+  "direction": 1
+ },
+ "pieces": [
+  {
+   "track_type": 2,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 6,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 9,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 12,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 13,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 11,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 14,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 15,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 18,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 137,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 160,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 159,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 140,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 21,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 18,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 137,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 162,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 145,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 146,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 147,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 150,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 151,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 152,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 169,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 140,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 21,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 18,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 89,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 20,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 19,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 94,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 21,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 6,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 26,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 44,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 20,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 216,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 3,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 3,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 3,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 1,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 1,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 43,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 42,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 6,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 9,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 42,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 12,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 13,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 11,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 14,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 31,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 138,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 140,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 25,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 7,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 8,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 9,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 12,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 36,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 15,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 19,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 23,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 21,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 18,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 22,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 20,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 19,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 23,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 21,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 18,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 44,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 24,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 7,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 8,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 9,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 12,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 37,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 30,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 44,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 20,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 12,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 13,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 14,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 15,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 19,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 138,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 161,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 141,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 141,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 158,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 139,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 24,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 7,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 8,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 9,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 216,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 1,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 1,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 1,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 1,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 1,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 42,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 6,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 9,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 12,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 36,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 36,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 30,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 137,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 139,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 24,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 7,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 8,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 9,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 12,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 13,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 14,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 15,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 6,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 7,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 8,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 9,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 12,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 36,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 10,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 15,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 19,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 138,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 161,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 158,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 139,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 20,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 6,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 7,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 8,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 9,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 12,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 15,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 6,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 9,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 12,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 13,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 14,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 30,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 22,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 137,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 139,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 91,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 91,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 87,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 20,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 216,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 2,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 1,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 1,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 1,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 1,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 6,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 9,
+   "has_chain_lift": true
+  },
+  {
+   "track_type": 42,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 12,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 13,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 11,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 11,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 11,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 14,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 31,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 138,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 140,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 25,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 7,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 5,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 5,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 8,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 9,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 133,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 150,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 151,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 152,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 153,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 144,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 147,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 150,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 168,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 139,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 137,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 139,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 137,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 139,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 93,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 28,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 31,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 23,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 21,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 18,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 44,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 44,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 24,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 4,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 9,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 39,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 42,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 42,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 38,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 0,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 42,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 216,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 1,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 1,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 1,
+   "has_chain_lift": false
+  },
+  {
+   "track_type": 1,
+   "has_chain_lift": false
+  }
+ ],
+ "piece_count": 267,
+ "circuit_complete": true,
+ "export_source": "iterator",
+ "footprint": {
+  "min_x": 24,
+  "min_y": 24,
+  "max_x": 107,
+  "max_y": 112,
+  "width": 84,
+  "height": 89,
+  "origin_offset": {
+   "x": 83,
+   "y": 40
+  }
+ }
+}

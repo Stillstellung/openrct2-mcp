@@ -1,0 +1,8 @@
+{
+  "name": "classic",
+  "description": "Traditional park benches and bins along main paths",
+  "flower_identifier": null,
+  "flower_colour": 14,
+  "grass_surface_style": 0,
+  "edge_style": 0
+}

@@ -1,0 +1,187 @@
+{
+ "template_version": 1,
+ "name": "Inferno Loop",
+ "slug": "inferno-loop",
+ "notes": "Places cleanly but test never completes - long flat cruise at peak stalls measurement. Avoid flat cruises at lift apex; drop soon after the lift.",
+ "prompt": "",
+ "mood": "",
+ "ratings": {
+  "excitement": 0.13,
+  "intensity": 0.13,
+  "nausea": 0.08
+ },
+ "validated": false,
+ "lint_ok": true,
+ "stats": {
+  "piece_count": 44,
+  "station_pieces": 5,
+  "footprint_bbox": [
+   -12,
+   -6,
+   8,
+   0
+  ],
+  "footprint_size": [
+   21,
+   7
+  ],
+  "max_z_above_station": 8,
+  "peak_piece_index": 8,
+  "endpoint": {
+   "x": 0,
+   "y": 0,
+   "z": 0,
+   "direction": 0
+  }
+ },
+ "created_at": "2026-06-09T13:44:30",
+ "design": {
+  "version": 1,
+  "ride_type": 52,
+  "pieces": [
+   {
+    "track_type": 2
+   },
+   {
+    "track_type": 3
+   },
+   {
+    "track_type": 3
+   },
+   {
+    "track_type": 3
+   },
+   {
+    "track_type": 6,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 9,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 42
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 42
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 42
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 42
+   },
+   {
+    "track_type": 12
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 15
+   },
+   {
+    "track_type": 1
+   }
+  ],
+  "origin": {
+   "x": 0,
+   "y": 0,
+   "z": 0,
+   "direction": 0
+  }
+ }
+}

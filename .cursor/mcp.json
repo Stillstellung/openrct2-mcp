@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "openrct2": {
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": ["-m", "openrct2_mcp"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/mcp-server",
+        "OPENRCT2_BRIDGE_PORT": "20020",
+        "OPENRCT2_RIDE_BUILDER_PORT": "20021"
+      }
+    }
+  }
+}

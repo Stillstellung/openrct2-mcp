@@ -1,0 +1,30 @@
+[project]
+name = "openrct2-mcp"
+version = "0.1.0"
+description = "MCP server for AI control of a running OpenRCT2 instance"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Ben Spurlock" }]
+dependencies = [
+    "mcp>=1.0.0",
+    "pyrct2>=0.9.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.urls]
+Homepage = "https://github.com/BenDaSpur/openrct2-mcp"
+Repository = "https://github.com/BenDaSpur/openrct2-mcp"
+Issues = "https://github.com/BenDaSpur/openrct2-mcp/issues"
+
+[project.scripts]
+openrct2-mcp = "openrct2_mcp.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["mcp-server"]
