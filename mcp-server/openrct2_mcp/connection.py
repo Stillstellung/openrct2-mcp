@@ -117,6 +117,7 @@ class GameSession:
         self._game: RCT2 | None = None
         self._ride_builder: RideBuilderClient | None = None
         self._bridge_port = DEFAULT_BRIDGE_PORT
+        self._known_game_speed: int | None = None
 
     def _connect_bridge(self) -> RCT2:
         last_error: Exception | None = None
@@ -161,6 +162,13 @@ class GameSession:
     def bridge_port(self) -> int:
         return self._bridge_port
 
+    @property
+    def known_game_speed(self) -> int | None:
+        return self._known_game_speed
+
+    def remember_game_speed(self, speed: int) -> None:
+        self._known_game_speed = speed
+
     def reset(self) -> None:
         if self._game is not None:
             self._game.close()
@@ -168,6 +176,7 @@ class GameSession:
         if self._ride_builder is not None:
             self._ride_builder.close()
             self._ride_builder = None
+        self._known_game_speed = None
 
 
 SESSION = GameSession()

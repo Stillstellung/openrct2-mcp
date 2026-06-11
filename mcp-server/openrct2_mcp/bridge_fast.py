@@ -37,11 +37,50 @@ def primary_ride_price(price_field: Any) -> int | None:
     return None
 
 
+def parse_percent_field(value: Any) -> float | None:
+    """Parse bridge percentage fields (0-100)."""
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number < 0:
+        return 0.0
+    if number > 100 and number <= 65535:
+        return round(number / 655.35, 1)
+    return round(min(number, 100.0), 1)
+
+
+def parse_reliability_percent(raw: dict[str, Any]) -> float | None:
+    """Return ride reliability % when the bridge exposes it."""
+    for key in ("reliability", "reliabilityPercentage", "reliability_percentage"):
+        if key in raw:
+            parsed = parse_percent_field(raw.get(key))
+            if parsed is not None:
+                return parsed
+    return None
+
+
+def ride_maintenance_from_raw(raw: dict[str, Any]) -> dict[str, Any]:
+    """Maintenance-tab fields available from the bridge ride payload."""
+    breakdown = raw.get("breakdown")
+    breakdown_label = str(breakdown or "none").lower()
+    return {
+        "downtime": parse_percent_field(raw.get("downtime")),
+        "reliability": parse_reliability_percent(raw),
+        "age_months": raw.get("age"),
+        "breakdown": breakdown,
+        "active_breakdown": breakdown_label not in ("none", "", "0", "null"),
+    }
+
+
 def ride_summary_from_raw(raw: dict[str, Any]) -> dict[str, Any]:
     """Normalize a single ride dict from the bridge (no Pydantic)."""
     excitement = raw.get("excitement")
     intensity = raw.get("intensity")
     nausea = raw.get("nausea")
+    maintenance = ride_maintenance_from_raw(raw)
     return {
         "id": raw.get("id"),
         "name": raw.get("name"),
@@ -54,7 +93,10 @@ def ride_summary_from_raw(raw: dict[str, Any]) -> dict[str, Any]:
         "total_customers": raw.get("totalCustomers"),
         "price": primary_ride_price(raw.get("price")),
         "satisfaction": raw.get("satisfaction"),
-        "breakdown": raw.get("breakdown"),
+        "breakdown": maintenance["breakdown"],
+        "downtime": maintenance["downtime"],
+        "reliability": maintenance["reliability"],
+        "age_months": maintenance["age_months"],
         "inspection_interval": raw.get("inspectionInterval"),
         "minimum_waiting_time": raw.get("minimumWaitingTime"),
         "maximum_waiting_time": raw.get("maximumWaitingTime"),
