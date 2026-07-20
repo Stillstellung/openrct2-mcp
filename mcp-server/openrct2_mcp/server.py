@@ -211,11 +211,14 @@ def openrct2_status() -> str:
             plugin_api: int | None = None
             try:
                 speed_payload = ride_builder.call("getGameSpeed")
-                if isinstance(speed_payload.get("apiVersion"), int):
-                    plugin_api = int(speed_payload["apiVersion"])
-            except Exception:
+            except ConnectionError:
                 speed_payload = None
                 plugin_api = None
+            else:
+                if isinstance(speed_payload, dict) and isinstance(
+                    speed_payload.get("apiVersion"), int
+                ):
+                    plugin_api = int(speed_payload["apiVersion"])
             return _json(
                 {
                     "connected": True,

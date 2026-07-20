@@ -8,7 +8,7 @@ from typing import Any, Generator
 from pyrct2._generated.enums import GameSpeed
 from pyrct2.client import RCT2
 
-from openrct2_mcp.connection import ensure_paused, ensure_unpaused
+from openrct2_mcp.connection import ConnectionError, ensure_paused, ensure_unpaused
 
 GAME_SPEED_NAMES: dict[int, str] = {
     int(GameSpeed.NORMAL): "normal",
@@ -102,7 +102,7 @@ def game_time_status(
     if payload is None and ride_builder is not None:
         try:
             payload = ride_builder.call("getGameSpeed")
-        except Exception:
+        except ConnectionError:
             payload = None
     if isinstance(payload, dict) and isinstance(payload.get("gameSpeed"), int):
         plugin_speed = int(payload["gameSpeed"])

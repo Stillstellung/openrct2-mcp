@@ -238,7 +238,9 @@ function main() {
             satisfaction: ride.satisfaction,
             inspectionInterval: ride.inspectionInterval,
             guestCount: guestCount,
-            isEmpty: typeof ride.isEmpty === "boolean" ? ride.isEmpty : guestCount === 0,
+            isEmpty: typeof ride.isEmpty === "boolean"
+                ? ride.isEmpty
+                : (typeof guestCount === "number" ? guestCount === 0 : null),
             incomePerHour: typeof ride.incomePerHour === "number" ? ride.incomePerHour : null,
             profit: typeof ride.profit === "number" ? ride.profit : null,
             queueTime: queueMetrics.queueTime,
@@ -256,15 +258,24 @@ function main() {
     // Match mcp-server map_region.MAX_REGION_SIDE — clamp oversized socket clients.
     const MAX_RECT_SIDE = 40;
 
+    function isFiniteInteger(n) {
+        return typeof n === "number" && Number.isFinite(n) && Number.isInteger(n);
+    }
+
     function normalizeRectBounds(bounds) {
         if (!bounds || typeof bounds !== "object") return null;
+        if (
+            !isFiniteInteger(bounds.minX) ||
+            !isFiniteInteger(bounds.maxX) ||
+            !isFiniteInteger(bounds.minY) ||
+            !isFiniteInteger(bounds.maxY)
+        ) {
+            return null;
+        }
         let minX = Math.min(bounds.minX, bounds.maxX);
         let maxX = Math.max(bounds.minX, bounds.maxX);
         let minY = Math.min(bounds.minY, bounds.maxY);
         let maxY = Math.max(bounds.minY, bounds.maxY);
-        if (![minX, maxX, minY, maxY].every(n => typeof n === "number" && Number.isFinite(n))) {
-            return null;
-        }
         const width = maxX - minX + 1;
         const height = maxY - minY + 1;
         if (width > MAX_RECT_SIDE) {
