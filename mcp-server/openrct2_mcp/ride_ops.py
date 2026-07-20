@@ -9,7 +9,7 @@ from pyrct2.client import RCT2
 from pyrct2.errors import ActionError, ActionStatus
 from pyrct2.result import ActionResult
 
-from openrct2_mcp.bridge_fast import get_ride_raw, list_rides_fast, ride_maintenance_from_raw
+from openrct2_mcp.bridge_fast import get_ride_raw, list_rides_fast
 from openrct2_mcp.connection import RideBuilderClient, SESSION, ensure_paused
 from openrct2_mcp.time_tools import advance_ticks_with_speed, game_speed_label
 
@@ -98,6 +98,31 @@ def _close_ride(game: RCT2, ride_id: int) -> None:
     game.actions.ride_set_status(ride=ride_id, status=RideStatus.CLOSED)
 
 
+def _ride_occupancy_from_plugin(
+    ride_builder: RideBuilderClient | None, ride_id: int
+) -> tuple[int | None, bool | None]:
+    """Read guestCount/isEmpty from ride-builder (OpenRCT2 #26675 fields)."""
+    if ride_builder is None:
+        return None, None
+    try:
+        row = ride_builder.call("getRideMaintenance", {"rideId": ride_id})
+    except Exception:
+        return None, None
+    if not isinstance(row, dict):
+        return None, None
+    guest_count = row.get("guestCount")
+    is_empty = row.get("isEmpty")
+    gc = int(guest_count) if guest_count is not None else None
+    ie: bool | None
+    if isinstance(is_empty, bool):
+        ie = is_empty
+    elif gc is not None:
+        ie = gc == 0
+    else:
+        ie = None
+    return gc, ie
+
+
 def _execute_refurbish(game: RCT2, ride_id: int) -> ActionResult:
     """Renew/refurbish a ride (resets age, reliability, crash state). Ride must be closed and empty."""
     ensure_paused(game)
@@ -144,6 +169,7 @@ def refurbish_ride(
     game: RCT2,
     ride_id: int,
     *,
+    ride_builder: RideBuilderClient | None = None,
     close_first: bool = True,
     wait_for_empty: bool = True,
     max_wait_ticks: int = DEFAULT_REFURBISH_MAX_WAIT_TICKS,
@@ -188,6 +214,25 @@ def refurbish_ride(
         }
 
     while waited_ticks <= max_wait_ticks:
+        guest_count, is_empty = _ride_occupancy_from_plugin(ride_builder, ride_id)
+        ride_has_guests = (
+            (guest_count is not None and guest_count > 0)
+            or is_empty is False
+        )
+        if ride_has_guests:
+            if waited_ticks >= max_wait_ticks:
+                break
+            speed_info = _fast_forward(
+                game,
+                tick_step,
+                boost_speed=boost_speed,
+                boost_to=boost_to,
+                restore_to=restore_to,
+            )
+            waited_ticks += tick_step
+            speed_steps.extend(speed_info.get("steps", []))
+            continue
+
         try:
             result = _attempt()
             if waited_ticks:
@@ -225,7 +270,16 @@ def refurbish_ride(
                 )
             waited_ticks += tick_step
 
-    detail = str(last_error) if last_error else "unknown error"
+    if last_error is not None:
+        detail = str(last_error)
+    else:
+        guest_count, is_empty = _ride_occupancy_from_plugin(ride_builder, ride_id)
+        if guest_count is not None and guest_count > 0:
+            detail = f"ride still occupied with {guest_count} guest(s)"
+        elif is_empty is False:
+            detail = "ride still occupied (plugin reported isEmpty=false)"
+        else:
+            detail = "unknown error"
     raise ValueError(
         f"Could not refurbish ride {ride_id} after fast-forwarding {waited_ticks} ticks "
         f"(~{waited_ticks // TICKS_PER_DAY} in-game days; ride must be closed and empty). "
@@ -235,27 +289,6 @@ def refurbish_ride(
 
 DEFAULT_RELIABILITY_REFURBISH_THRESHOLD = 85.0
 DEFAULT_DOWNTIME_REFURBISH_THRESHOLD = 8.0
-
-
-def _merge_maintenance(
-    maintenance: dict[str, Any],
-    ride_builder_row: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """Prefer ride-builder maintenance stats when the bridge omits reliability."""
-    merged = dict(maintenance)
-    if ride_builder_row is None:
-        return merged
-    for key, rb_key in (
-        ("downtime", "downtime"),
-        ("reliability", "reliability"),
-        ("age_months", "age"),
-        ("breakdown", "breakdown"),
-    ):
-        if merged.get(key) is None and ride_builder_row.get(rb_key) is not None:
-            merged[key] = ride_builder_row.get(rb_key)
-    if ride_builder_row.get("activeBreakdown"):
-        merged["active_breakdown"] = True
-    return merged
 
 
 def refurbish_need_score(
@@ -315,20 +348,6 @@ def recommend_refurbish(
     return False
 
 
-def _load_ride_builder_maintenance(ride_builder: RideBuilderClient) -> dict[int, dict[str, Any]]:
-    try:
-        rows = ride_builder.call("listRideMaintenance")
-    except Exception:
-        return {}
-    if not isinstance(rows, list):
-        return {}
-    by_id: dict[int, dict[str, Any]] = {}
-    for row in rows:
-        if isinstance(row, dict) and isinstance(row.get("rideId"), int):
-            by_id[row["rideId"]] = row
-    return by_id
-
-
 def list_refurbish_candidates(
     game: RCT2,
     ride_builder: RideBuilderClient,
@@ -339,23 +358,19 @@ def list_refurbish_candidates(
     rides_only: bool = True,
 ) -> dict[str, Any]:
     """List rides ranked for refurbish using downtime and reliability together."""
-    rb_rows = _load_ride_builder_maintenance(ride_builder)
-    reliability_available = any(row.get("reliability") is not None for row in rb_rows.values())
+    summaries = list_rides_fast(game, ride_builder)
+    reliability_available = any(row.get("reliability") is not None for row in summaries)
 
     candidates: list[dict[str, Any]] = []
-    for summary in list_rides_fast(game, ride_builder):
+    for summary in summaries:
         classification = str(summary.get("classification") or "").lower()
         if rides_only and classification in ("stall", "facility"):
             continue
 
         ride_id = summary["id"]
-        raw = get_ride_raw(game, ride_id) or {}
-        maintenance = _merge_maintenance(
-            ride_maintenance_from_raw(raw),
-            rb_rows.get(ride_id),
-        )
+        # list_rides_fast already merges bridge + ride-builder maintenance fields.
         score, reasons = refurbish_need_score(
-            maintenance,
+            summary,
             reliability_threshold=reliability_threshold,
             downtime_threshold=downtime_threshold,
         )
@@ -368,14 +383,14 @@ def list_refurbish_candidates(
                 "name": summary.get("name"),
                 "score": round(score, 1),
                 "recommend_refurbish": recommend_refurbish(
-                    maintenance,
+                    summary,
                     reliability_threshold=reliability_threshold,
                     downtime_threshold=downtime_threshold,
                 ),
-                "downtime": maintenance.get("downtime"),
-                "reliability": maintenance.get("reliability"),
-                "age_months": maintenance.get("age_months"),
-                "breakdown": maintenance.get("breakdown"),
+                "downtime": summary.get("downtime"),
+                "reliability": summary.get("reliability"),
+                "age_months": summary.get("age_months"),
+                "breakdown": summary.get("breakdown"),
                 "reasons": reasons,
             }
         )
@@ -386,13 +401,14 @@ def list_refurbish_candidates(
 
     note = (
         "Candidates are ranked using downtime and reliability together (matching the ride maintenance tab). "
-        "Reliability is read when the OpenRCT2 plugin API exposes it; until then only downtime/breakdown/age "
-        "signals are available programmatically."
+        "Reliability/guest occupancy come from OpenRCT2 plugin API fields added in #26675 "
+        "(ride.reliability, guestCount, isEmpty) via the ride-builder plugin."
     )
     if not reliability_available:
         note += (
-            " Reliability is not exposed to plugins in current OpenRCT2 builds, so rides like "
-            "low-reliability / zero-downtime coasters may be under-ranked until upstream adds ride.reliability."
+            " Reliability was unavailable from this OpenRCT2 build/plugin session, so ranking "
+            "fell back to downtime/breakdown/age only. Update OpenRCT2 develop (post-#26675) "
+            "and reload the ride-builder plugin."
         )
 
     return {

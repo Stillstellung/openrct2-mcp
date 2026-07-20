@@ -214,9 +214,15 @@ def place_banner(
 
 
 def _is_litter_bin_full(elem: dict[str, Any]) -> bool:
-    """True when a litter bin is full (OpenRCT2 uses 255 for empty edge status bits)."""
+    """True when a litter bin shows a full slot (matches the engine's full/emptiable check)."""
+    full = elem.get("isAdditionFull")
+    if isinstance(full, bool):
+        return full
+    # Fallback for older plugin APIs: 2 bits per edge slot (3 = empty, 0 = full).
     status = elem.get("additionStatus")
-    return status is not None and status < 255
+    if status is None:
+        return False
+    return any(((status >> (2 * slot)) & 0b11) == 0 for slot in range(4))
 
 
 def _footpath_addition_needs_replacement(elem: dict[str, Any], ident: str) -> str | None:

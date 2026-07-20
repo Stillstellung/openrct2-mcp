@@ -81,6 +81,7 @@ def ride_summary_from_raw(raw: dict[str, Any]) -> dict[str, Any]:
     intensity = raw.get("intensity")
     nausea = raw.get("nausea")
     maintenance = ride_maintenance_from_raw(raw)
+    guest_count = raw.get("guestCount")
     return {
         "id": raw.get("id"),
         "name": raw.get("name"),
@@ -94,12 +95,18 @@ def ride_summary_from_raw(raw: dict[str, Any]) -> dict[str, Any]:
         "price": primary_ride_price(raw.get("price")),
         "satisfaction": raw.get("satisfaction"),
         "breakdown": maintenance["breakdown"],
+        "active_breakdown": maintenance["active_breakdown"],
         "downtime": maintenance["downtime"],
         "reliability": maintenance["reliability"],
         "age_months": maintenance["age_months"],
+        "guest_count": guest_count,
+        "is_empty": raw.get("isEmpty") if "isEmpty" in raw else (guest_count == 0 if guest_count is not None else None),
+        "income_per_hour": raw.get("incomePerHour"),
+        "profit": raw.get("profit"),
         "inspection_interval": raw.get("inspectionInterval"),
         "minimum_waiting_time": raw.get("minimumWaitingTime"),
         "maximum_waiting_time": raw.get("maximumWaitingTime"),
+        "queue_time": raw.get("queueTime"),
     }
 
 
@@ -115,14 +122,59 @@ def get_ride_raw(game: RCT2, ride_id: int) -> dict[str, Any] | None:
     return resp["payload"]
 
 
+def merge_ride_builder_maintenance(
+    summary: dict[str, Any],
+    ride_builder_row: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Fill bridge gaps from ride-builder (reliability/occupancy/income from OpenRCT2 #26675)."""
+    if ride_builder_row is None:
+        return summary
+    merged = dict(summary)
+    for summary_key, rb_key in (
+        ("downtime", "downtime"),
+        ("reliability", "reliability"),
+        ("age_months", "age"),
+        ("breakdown", "breakdown"),
+        ("guest_count", "guestCount"),
+        ("is_empty", "isEmpty"),
+        ("income_per_hour", "incomePerHour"),
+        ("profit", "profit"),
+        ("queue_time", "queueTime"),
+    ):
+        if merged.get(summary_key) is None and ride_builder_row.get(rb_key) is not None:
+            merged[summary_key] = ride_builder_row.get(rb_key)
+    if ride_builder_row.get("activeBreakdown"):
+        merged["active_breakdown"] = True
+    station_times = ride_builder_row.get("stationQueueTimes")
+    if station_times and merged.get("station_queue_times") is None:
+        merged["station_queue_times"] = station_times
+    return merged
+
+
+def load_ride_builder_maintenance_index(ride_builder: RideBuilderClient) -> dict[int, dict[str, Any]]:
+    try:
+        rows = ride_builder.call("listRideMaintenance")
+    except Exception:
+        return {}
+    if not isinstance(rows, list):
+        return {}
+    by_id: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        if isinstance(row, dict) and isinstance(row.get("rideId"), int):
+            by_id[row["rideId"]] = row
+    return by_id
+
+
 def list_rides_fast(game: RCT2, ride_builder: RideBuilderClient) -> list[dict[str, Any]]:
     """List all rides using listAllRides + per-id queries (scales with ride count, not map size)."""
     index = ride_builder.call("listAllRides")
+    rb_rows = load_ride_builder_maintenance_index(ride_builder)
     summaries: list[dict[str, Any]] = []
     for entry in index:
         raw = get_ride_raw(game, entry["id"])
         if raw is not None:
-            summaries.append(ride_summary_from_raw(raw))
+            summary = ride_summary_from_raw(raw)
+            summaries.append(merge_ride_builder_maintenance(summary, rb_rows.get(entry["id"])))
     summaries.sort(key=lambda r: r.get("excitement") or 0, reverse=True)
     return summaries
 

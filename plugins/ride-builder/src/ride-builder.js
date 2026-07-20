@@ -127,6 +127,9 @@ function main() {
         ["getRideStats",         params => handleGetRideStats(params)],
         ["getRideMaintenance",   params => handleGetRideMaintenance(params)],
         ["listRideMaintenance",  () => handleListRideMaintenance()],
+        ["getGameSpeed",         () => handleGetGameSpeed()],
+        ["getElementsInRect",    params => handleGetElementsInRect(params)],
+        ["getGuestsInRect",      params => handleGetGuestsInRect(params)],
         ["placeTrackPiece",      params => handlePlaceTrackPiece(params)],
         ["getValidNextPieces",   params => handleGetValidNextPieces(params)],
         ["placeEntranceExit",    params => handlePlaceEntranceExit(params)],
@@ -204,9 +207,24 @@ function main() {
         return null;
     }
 
+    function stationQueueMetrics(ride) {
+        const stations = ride.stations || [];
+        const stationQueueTimes = [];
+        let queueTime = null;
+        for (let i = 0; i < stations.length; i++) {
+            const st = stations[i];
+            if (!st || typeof st.queueTime !== "number") continue;
+            stationQueueTimes.push({ index: i, queueTime: st.queueTime });
+            queueTime = queueTime == null ? st.queueTime : Math.max(queueTime, st.queueTime);
+        }
+        return { queueTime, stationQueueTimes };
+    }
+
     function serializeRideMaintenance(ride) {
         const breakdown = ride.breakdown;
         const breakdownLabel = breakdown == null ? "none" : String(breakdown).toLowerCase();
+        const guestCount = typeof ride.guestCount === "number" ? ride.guestCount : null;
+        const queueMetrics = stationQueueMetrics(ride);
         return {
             rideId: ride.id,
             name: ride.name,
@@ -219,7 +237,192 @@ function main() {
             activeBreakdown: breakdownLabel !== "none" && breakdownLabel !== "" && breakdownLabel !== "0",
             satisfaction: ride.satisfaction,
             inspectionInterval: ride.inspectionInterval,
+            guestCount: guestCount,
+            isEmpty: typeof ride.isEmpty === "boolean"
+                ? ride.isEmpty
+                : (typeof guestCount === "number" ? guestCount === 0 : null),
+            incomePerHour: typeof ride.incomePerHour === "number" ? ride.incomePerHour : null,
+            profit: typeof ride.profit === "number" ? ride.profit : null,
+            queueTime: queueMetrics.queueTime,
+            stationQueueTimes: queueMetrics.stationQueueTimes,
         };
+    }
+
+    async function handleGetGameSpeed() {
+        return {
+            apiVersion: context.apiVersion,
+            gameSpeed: typeof context.gameSpeed === "number" ? context.gameSpeed : null,
+        };
+    }
+
+    // Match mcp-server map_region.MAX_REGION_SIDE — clamp oversized socket clients.
+    const MAX_RECT_SIDE = 40;
+
+    function isFiniteInteger(n) {
+        return typeof n === "number" && Number.isFinite(n) && Number.isInteger(n);
+    }
+
+    function normalizeRectBounds(bounds) {
+        if (!bounds || typeof bounds !== "object") return null;
+        if (
+            !isFiniteInteger(bounds.minX) ||
+            !isFiniteInteger(bounds.maxX) ||
+            !isFiniteInteger(bounds.minY) ||
+            !isFiniteInteger(bounds.maxY)
+        ) {
+            return null;
+        }
+        let minX = Math.min(bounds.minX, bounds.maxX);
+        let maxX = Math.max(bounds.minX, bounds.maxX);
+        let minY = Math.min(bounds.minY, bounds.maxY);
+        let maxY = Math.max(bounds.minY, bounds.maxY);
+        const width = maxX - minX + 1;
+        const height = maxY - minY + 1;
+        if (width > MAX_RECT_SIDE) {
+            maxX = minX + MAX_RECT_SIDE - 1;
+        }
+        if (height > MAX_RECT_SIDE) {
+            maxY = minY + MAX_RECT_SIDE - 1;
+        }
+        return { minX, maxX, minY, maxY };
+    }
+
+    function summarizeFootpathElement(tileX, tileY, el) {
+        const summary = {
+            tileX,
+            tileY,
+            baseZ: el.baseZ,
+            isQueue: !!el.isQueue,
+        };
+        if (typeof el.additionStatus === "number") summary.additionStatus = el.additionStatus;
+        if (typeof el.isAdditionBroken === "boolean") summary.isAdditionBroken = el.isAdditionBroken;
+        if (typeof el.isAdditionFull === "boolean") summary.isAdditionFull = el.isAdditionFull;
+        return summary;
+    }
+
+    function summarizeTrackElement(tileX, tileY, el) {
+        return {
+            tileX,
+            tileY,
+            baseZ: el.baseZ,
+            trackType: el.trackType,
+            ride: el.ride,
+            sequenceIndex: el.sequenceIndex != null ? el.sequenceIndex : el.sequence,
+        };
+    }
+
+    function summarizeEntranceElement(tileX, tileY, el) {
+        // EntranceElement.object is ENTRANCE_TYPE: 0=ride entrance, 1=ride exit, 2=park entrance.
+        // Native summaries may already expose isExit.
+        const isExit = typeof el.isExit === "boolean" ? el.isExit : el.object === 1;
+        return {
+            tileX,
+            tileY,
+            baseZ: el.baseZ,
+            ride: el.ride,
+            station: el.station,
+            isExit,
+        };
+    }
+
+    function scanElementsInRect(type, bounds) {
+        const out = [];
+        for (let ty = bounds.minY; ty <= bounds.maxY; ty++) {
+            for (let tx = bounds.minX; tx <= bounds.maxX; tx++) {
+                const tile = map.getTile(tx, ty);
+                if (!tile) continue;
+                const elements = tile.elements || [];
+                for (let i = 0; i < elements.length; i++) {
+                    const el = elements[i];
+                    if (!el || el.type !== type) continue;
+                    if (type === "footpath") out.push(summarizeFootpathElement(tx, ty, el));
+                    else if (type === "track") out.push(summarizeTrackElement(tx, ty, el));
+                    else if (type === "entrance") out.push(summarizeEntranceElement(tx, ty, el));
+                }
+            }
+        }
+        return out;
+    }
+
+    function serializeGuestNearTile(guest) {
+        return {
+            id: guest.id,
+            name: guest.name,
+            happiness: guest.happiness,
+            tile: [Math.floor(guest.x / 32), Math.floor(guest.y / 32)],
+            thoughts: (guest.thoughts || []).slice(0, 5),
+        };
+    }
+
+    function scanGuestsInRect(bounds) {
+        // Prefer per-tile query when available (OpenRCT2 develop).
+        if (typeof map.getAllEntitiesOnTile === "function") {
+            const out = [];
+            const seen = {};
+            for (let ty = bounds.minY; ty <= bounds.maxY; ty++) {
+                for (let tx = bounds.minX; tx <= bounds.maxX; tx++) {
+                    // CoordsXY is world units (32 per tile), same as getTrackIterator.
+                    const guests = map.getAllEntitiesOnTile("guest", { x: tx * 32, y: ty * 32 }) || [];
+                    for (let i = 0; i < guests.length; i++) {
+                        const guest = guests[i];
+                        if (!guest || seen[guest.id]) continue;
+                        seen[guest.id] = true;
+                        out.push(serializeGuestNearTile(guest));
+                    }
+                }
+            }
+            return out;
+        }
+        const guests = map.getAllEntities("guest") || [];
+        return guests
+            .filter(guest => {
+                const tx = Math.floor(guest.x / 32);
+                const ty = Math.floor(guest.y / 32);
+                return tx >= bounds.minX && tx <= bounds.maxX && ty >= bounds.minY && ty <= bounds.maxY;
+            })
+            .map(serializeGuestNearTile);
+    }
+
+    function summarizeRectElement(type, el) {
+        const tileX = typeof el.tileX === "number" ? el.tileX : null;
+        const tileY = typeof el.tileY === "number" ? el.tileY : null;
+        if (tileX == null || tileY == null) return null;
+        if (type === "footpath") return summarizeFootpathElement(tileX, tileY, el);
+        if (type === "track") return summarizeTrackElement(tileX, tileY, el);
+        if (type === "entrance") return summarizeEntranceElement(tileX, tileY, el);
+        return null;
+    }
+
+    async function handleGetElementsInRect(params) {
+        const { type, bounds: rawBounds } = params || {};
+        if (typeof type !== "string" || !rawBounds) {
+            throw new Error("Missing or invalid parameters: type, bounds");
+        }
+        if (type !== "footpath" && type !== "track" && type !== "entrance") {
+            throw new Error("type must be footpath, track, or entrance");
+        }
+        const bounds = normalizeRectBounds(rawBounds);
+        if (!bounds) throw new Error("Invalid bounds");
+        // Native map.getElementsInRect was proposed in #26675 but not merged; keep
+        // a compatible endpoint via tile scan (and prefer native if it lands later).
+        if (typeof map.getElementsInRect === "function") {
+            const elements = map.getElementsInRect(type, bounds) || [];
+            return elements.map(el => summarizeRectElement(type, el)).filter(Boolean);
+        }
+        return scanElementsInRect(type, bounds);
+    }
+
+    async function handleGetGuestsInRect(params) {
+        const { bounds: rawBounds } = params || {};
+        if (!rawBounds) {
+            throw new Error("Missing parameter: bounds");
+        }
+        const bounds = normalizeRectBounds(rawBounds);
+        if (!bounds) throw new Error("Invalid bounds");
+        if (typeof map.getGuestsInRect === "function") {
+            return map.getGuestsInRect(bounds).map(serializeGuestNearTile);
+        }
+        return scanGuestsInRect(bounds);
     }
 
     async function handleGetRideStats(params) {
@@ -1434,7 +1637,8 @@ registerPlugin({
  authors: ["openrct2-mods"],
  type: "intransient",
  licence: "MIT",
+ // Develop is currently API 116 (#26560). #26675 added ride/context helpers without a bump.
  minApiVersion: 114,
- targetApiVersion: 114,
+ targetApiVersion: 116,
  main: main
 });

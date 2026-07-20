@@ -8,7 +8,44 @@ from typing import Any
 from pyrct2.client import RCT2
 from pyrct2.world._tile import Tile
 
+from openrct2_mcp.connection import RideBuilderClient
+
 MAX_REGION_SIDE = 40
+MAP_ELEMENT_TYPES = ("footpath", "track", "entrance")
+
+
+def get_elements_in_rect(
+    ride_builder: RideBuilderClient,
+    element_type: str,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+) -> dict[str, Any]:
+    """Bulk-export footpath, track, or entrance elements via ride-builder rect scan.
+
+    Uses a tile-scan polyfill compatible with OpenRCT2 #26675 develop builds
+    (native map.getElementsInRect was not merged with that PR).
+    """
+    if element_type not in MAP_ELEMENT_TYPES:
+        raise ValueError(f"element_type must be one of {MAP_ELEMENT_TYPES}")
+    width = max(1, min(width, MAX_REGION_SIDE))
+    height = max(1, min(height, MAX_REGION_SIDE))
+    bounds = {
+        "minX": x,
+        "minY": y,
+        "maxX": x + width - 1,
+        "maxY": y + height - 1,
+    }
+    elements = ride_builder.call("getElementsInRect", {"type": element_type, "bounds": bounds})
+    if not isinstance(elements, list):
+        elements = []
+    return {
+        "type": element_type,
+        "bounds": bounds,
+        "count": len(elements),
+        "elements": elements,
+    }
 
 
 def get_map_bounds(game: RCT2) -> dict[str, int]:
