@@ -84,12 +84,29 @@ def advance_ticks_with_speed(
     return {"ticks": ticks, **info, **payload}
 
 
-def game_time_status(game: RCT2, *, known_speed: GameSpeed | None = None) -> dict[str, Any]:
+def game_time_status(game: RCT2, *, known_speed: GameSpeed | None = None, ride_builder: Any | None = None) -> dict[str, Any]:
     """Return pause/date status and best-known game speed."""
     status = game.get_status().get("payload", {})
+    plugin_speed: int | None = None
+    if ride_builder is not None:
+        try:
+            payload = ride_builder.call("getGameSpeed")
+            if isinstance(payload.get("gameSpeed"), int):
+                plugin_speed = int(payload["gameSpeed"])
+        except Exception:
+            plugin_speed = None
+
+    if plugin_speed is not None:
+        return {
+            **status,
+            "game_speed": plugin_speed,
+            "game_speed_label": game_speed_label(plugin_speed),
+            "game_speed_source": "plugin",
+        }
+
     speed_note = (
-        "OpenRCT2 does not expose the current game speed to plugins; "
-        "only the last speed set via MCP is tracked."
+        "Game speed is readable via context.gameSpeed (OpenRCT2 #26675); "
+        "until the ride-builder plugin reports it, only the last speed set via MCP is tracked."
     )
     if known_speed is None:
         return {
@@ -102,5 +119,6 @@ def game_time_status(game: RCT2, *, known_speed: GameSpeed | None = None) -> dic
         **status,
         "game_speed": int(known_speed),
         "game_speed_label": game_speed_label(known_speed),
+        "game_speed_source": "session",
         "game_speed_note": speed_note,
     }

@@ -116,6 +116,7 @@ from openrct2_mcp.time_tools import (
 from openrct2_mcp.map_context import area_context
 from openrct2_mcp.map_region import (
     find_buildable_loop,
+    get_elements_in_rect,
     get_map_bounds,
     get_map_region,
     get_path_graph,
@@ -206,16 +207,25 @@ def openrct2_status() -> str:
             bridge_version = game.get_version().get("payload", {})
             ride_builder = SESSION.ride_builder
             rb_health = ride_builder.call("health")
+            plugin_api: int | None = None
+            try:
+                speed_payload = ride_builder.call("getGameSpeed")
+                if isinstance(speed_payload.get("apiVersion"), int):
+                    plugin_api = int(speed_payload["apiVersion"])
+            except Exception:
+                plugin_api = None
             return _json(
                 {
                     "connected": True,
                     "bridge_port": SESSION.bridge_port,
                     "bridge_version": bridge_version,
+                    "plugin_api_version": plugin_api,
                     "game_status": game_time_status(
                         game,
                         known_speed=GameSpeed(SESSION.known_game_speed)
                         if SESSION.known_game_speed is not None
                         else None,
+                        ride_builder=ride_builder,
                     ),
                     "ride_builder_port": ride_builder.port,
                     "ride_builder": rb_health,
@@ -234,7 +244,7 @@ def get_park_overview() -> str:
 
 @mcp.tool()
 def list_rides() -> str:
-    """List all rides with excitement, intensity, nausea, status, and income."""
+    """List all rides with excitement, intensity, nausea, status, reliability, and income."""
     with game_context() as game:
         return _json(list_rides_fast(game, SESSION.ride_builder))
 
@@ -615,6 +625,7 @@ def advance_time(
             known_speed=GameSpeed(SESSION.known_game_speed)
             if SESSION.known_game_speed is not None
             else None,
+            ride_builder=SESSION.ride_builder,
         )
         return _json(result)
 
@@ -631,7 +642,7 @@ def set_game_speed_tool(speed: str = "normal") -> str:
             {
                 "game_speed": int(target),
                 "game_speed_label": speed.strip().lower(),
-                "note": "OpenRCT2 does not expose the current speed to plugins; MCP tracks the last speed it set.",
+                "note": "getGameSpeed reads context.gameSpeed (OpenRCT2 #26675); MCP also tracks the last speed it set.",
             }
         )
 
@@ -1342,6 +1353,25 @@ def get_map_region_tool(
 
 
 @mcp.tool()
+def get_map_elements_in_rect_tool(
+    element_type: str,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+) -> str:
+    """Bulk-export footpath, track, or entrance tiles in a region via ride-builder.
+
+    element_type: footpath, track, or entrance. Region is capped at 40×40 tiles.
+    Footpath summaries include isAdditionFull when the OpenRCT2 build has #26675.
+    """
+    with game_context():
+        return _json(
+            get_elements_in_rect(SESSION.ride_builder, element_type, x, y, width, height)
+        )
+
+
+@mcp.tool()
 def get_path_graph_tool(
     x: int | None = None,
     y: int | None = None,
@@ -1779,6 +1809,7 @@ def refurbish_ride_tool(
         result = refurbish_ride(
             game,
             ride_id,
+            ride_builder=SESSION.ride_builder,
             close_first=close_first,
             wait_for_empty=wait_for_empty,
             max_wait_ticks=max_wait_ticks,
@@ -1963,7 +1994,7 @@ def get_complaint_hotspots_tool() -> str:
 def sample_guests_near_tile_tool(tile_x: int, tile_y: int, radius: int = 3, limit: int = 10) -> str:
     """Sample guests near a tile without full park scan."""
     with game_context() as game:
-        return _json(sample_guests_near_tile(game, tile_x, tile_y, radius, limit))
+        return _json(sample_guests_near_tile(game, tile_x, tile_y, radius, limit, SESSION.ride_builder))
 
 
 @mcp.tool()

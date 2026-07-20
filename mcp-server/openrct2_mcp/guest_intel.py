@@ -69,8 +69,34 @@ def get_complaint_hotspots(game: RCT2, ride_builder: RideBuilderClient) -> dict[
     return {"hotspot_count": len(hotspots), "by_category": by_category, "hotspots": hotspots[:30]}
 
 
-def sample_guests_near_tile(game: RCT2, tile_x: int, tile_y: int, radius: int = 3, limit: int = 10) -> dict:
-    """Sample guests by scanning entity ids near a tile (best-effort, no full scan)."""
+def sample_guests_near_tile(
+    game: RCT2,
+    tile_x: int,
+    tile_y: int,
+    radius: int = 3,
+    limit: int = 10,
+    ride_builder: RideBuilderClient | None = None,
+) -> dict:
+    """Sample guests near a tile via ride-builder rect scan, with bridge fallback."""
+    if ride_builder is not None:
+        try:
+            bounds = {
+                "minX": tile_x - radius,
+                "minY": tile_y - radius,
+                "maxX": tile_x + radius,
+                "maxY": tile_y + radius,
+            }
+            guests = ride_builder.call("getGuestsInRect", {"bounds": bounds})
+            if isinstance(guests, list):
+                return {
+                    "tile": [tile_x, tile_y],
+                    "radius": radius,
+                    "guests": guests[:limit],
+                    "source": "plugin",
+                }
+        except Exception:
+            pass
+
     # Bridge has no spatial guest query; sample low ids as heuristic peep pool.
     found: list[dict] = []
     center = Tile(tile_x, tile_y)
@@ -95,7 +121,7 @@ def sample_guests_near_tile(game: RCT2, tile_x: int, tile_y: int, radius: int = 
                 )
         except Exception:
             continue
-    return {"tile": [tile_x, tile_y], "radius": radius, "guests": found}
+    return {"tile": [tile_x, tile_y], "radius": radius, "guests": found, "source": "bridge_scan"}
 
 
 def guest_flow_summary(game: RCT2) -> dict[str, Any]:
