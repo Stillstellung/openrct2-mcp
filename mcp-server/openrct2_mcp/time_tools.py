@@ -84,17 +84,28 @@ def advance_ticks_with_speed(
     return {"ticks": ticks, **info, **payload}
 
 
-def game_time_status(game: RCT2, *, known_speed: GameSpeed | None = None, ride_builder: Any | None = None) -> dict[str, Any]:
-    """Return pause/date status and best-known game speed."""
+def game_time_status(
+    game: RCT2,
+    *,
+    known_speed: GameSpeed | None = None,
+    ride_builder: Any | None = None,
+    game_speed_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return pause/date status and best-known game speed.
+
+    Pass ``game_speed_payload`` to reuse a prior getGameSpeed response and avoid a
+    second ride-builder round-trip (e.g. from openrct2_status).
+    """
     status = game.get_status().get("payload", {})
     plugin_speed: int | None = None
-    if ride_builder is not None:
+    payload = game_speed_payload
+    if payload is None and ride_builder is not None:
         try:
             payload = ride_builder.call("getGameSpeed")
-            if isinstance(payload.get("gameSpeed"), int):
-                plugin_speed = int(payload["gameSpeed"])
         except Exception:
-            plugin_speed = None
+            payload = None
+    if isinstance(payload, dict) and isinstance(payload.get("gameSpeed"), int):
+        plugin_speed = int(payload["gameSpeed"])
 
     if plugin_speed is not None:
         return {

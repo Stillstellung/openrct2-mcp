@@ -9,7 +9,7 @@ from pyrct2.client import RCT2
 from pyrct2.errors import ActionError, ActionStatus
 from pyrct2.result import ActionResult
 
-from openrct2_mcp.bridge_fast import get_ride_raw, list_rides_fast, ride_maintenance_from_raw, _load_ride_builder_maintenance_index
+from openrct2_mcp.bridge_fast import get_ride_raw, list_rides_fast
 from openrct2_mcp.connection import RideBuilderClient, SESSION, ensure_paused
 from openrct2_mcp.time_tools import advance_ticks_with_speed, game_speed_label
 
@@ -280,35 +280,6 @@ DEFAULT_RELIABILITY_REFURBISH_THRESHOLD = 85.0
 DEFAULT_DOWNTIME_REFURBISH_THRESHOLD = 8.0
 
 
-def _merge_maintenance(
-    maintenance: dict[str, Any],
-    ride_builder_row: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """Prefer ride-builder maintenance stats when the bridge omits reliability."""
-    merged = dict(maintenance)
-    if ride_builder_row is None:
-        return merged
-    for key, rb_key in (
-        ("downtime", "downtime"),
-        ("reliability", "reliability"),
-        ("age_months", "age"),
-        ("breakdown", "breakdown"),
-        ("guest_count", "guestCount"),
-        ("is_empty", "isEmpty"),
-        ("income_per_hour", "incomePerHour"),
-        ("profit", "profit"),
-        ("queue_time", "queueTime"),
-    ):
-        if merged.get(key) is None and ride_builder_row.get(rb_key) is not None:
-            merged[key] = ride_builder_row.get(rb_key)
-    if ride_builder_row.get("activeBreakdown"):
-        merged["active_breakdown"] = True
-    station_times = ride_builder_row.get("stationQueueTimes")
-    if station_times and merged.get("station_queue_times") is None:
-        merged["station_queue_times"] = station_times
-    return merged
-
-
 def refurbish_need_score(
     maintenance: dict[str, Any],
     *,
@@ -366,10 +337,6 @@ def recommend_refurbish(
     return False
 
 
-def _load_ride_builder_maintenance(ride_builder: RideBuilderClient) -> dict[int, dict[str, Any]]:
-    return _load_ride_builder_maintenance_index(ride_builder)
-
-
 def list_refurbish_candidates(
     game: RCT2,
     ride_builder: RideBuilderClient,
@@ -380,23 +347,19 @@ def list_refurbish_candidates(
     rides_only: bool = True,
 ) -> dict[str, Any]:
     """List rides ranked for refurbish using downtime and reliability together."""
-    rb_rows = _load_ride_builder_maintenance(ride_builder)
-    reliability_available = any(row.get("reliability") is not None for row in rb_rows.values())
+    summaries = list_rides_fast(game, ride_builder)
+    reliability_available = any(row.get("reliability") is not None for row in summaries)
 
     candidates: list[dict[str, Any]] = []
-    for summary in list_rides_fast(game, ride_builder):
+    for summary in summaries:
         classification = str(summary.get("classification") or "").lower()
         if rides_only and classification in ("stall", "facility"):
             continue
 
         ride_id = summary["id"]
-        raw = get_ride_raw(game, ride_id) or {}
-        maintenance = _merge_maintenance(
-            ride_maintenance_from_raw(raw),
-            rb_rows.get(ride_id),
-        )
+        # list_rides_fast already merges bridge + ride-builder maintenance fields.
         score, reasons = refurbish_need_score(
-            maintenance,
+            summary,
             reliability_threshold=reliability_threshold,
             downtime_threshold=downtime_threshold,
         )
@@ -409,14 +372,14 @@ def list_refurbish_candidates(
                 "name": summary.get("name"),
                 "score": round(score, 1),
                 "recommend_refurbish": recommend_refurbish(
-                    maintenance,
+                    summary,
                     reliability_threshold=reliability_threshold,
                     downtime_threshold=downtime_threshold,
                 ),
-                "downtime": maintenance.get("downtime"),
-                "reliability": maintenance.get("reliability"),
-                "age_months": maintenance.get("age_months"),
-                "breakdown": maintenance.get("breakdown"),
+                "downtime": summary.get("downtime"),
+                "reliability": summary.get("reliability"),
+                "age_months": summary.get("age_months"),
+                "breakdown": summary.get("breakdown"),
                 "reasons": reasons,
             }
         )

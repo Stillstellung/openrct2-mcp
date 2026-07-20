@@ -207,12 +207,14 @@ def openrct2_status() -> str:
             bridge_version = game.get_version().get("payload", {})
             ride_builder = SESSION.ride_builder
             rb_health = ride_builder.call("health")
+            speed_payload: dict | None = None
             plugin_api: int | None = None
             try:
                 speed_payload = ride_builder.call("getGameSpeed")
                 if isinstance(speed_payload.get("apiVersion"), int):
                     plugin_api = int(speed_payload["apiVersion"])
             except Exception:
+                speed_payload = None
                 plugin_api = None
             return _json(
                 {
@@ -225,7 +227,7 @@ def openrct2_status() -> str:
                         known_speed=GameSpeed(SESSION.known_game_speed)
                         if SESSION.known_game_speed is not None
                         else None,
-                        ride_builder=ride_builder,
+                        game_speed_payload=speed_payload,
                     ),
                     "ride_builder_port": ride_builder.port,
                     "ride_builder": rb_health,

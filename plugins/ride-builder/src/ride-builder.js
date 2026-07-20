@@ -197,10 +197,7 @@ function main() {
     }
 
     function readReliabilityPercent(ride) {
-        if (typeof ride.reliability === "number" && Number.isFinite(ride.reliability)) {
-            return ride.reliability;
-        }
-        const keys = ["reliabilityPercentage", "reliability_percentage"];
+        const keys = ["reliability", "reliabilityPercentage", "reliability_percentage"];
         for (let i = 0; i < keys.length; i++) {
             const value = ride[keys[i]];
             if (typeof value === "number" && Number.isFinite(value)) {
@@ -256,6 +253,9 @@ function main() {
         };
     }
 
+    // Match mcp-server map_region.MAX_REGION_SIDE — reject oversized socket clients.
+    const MAX_RECT_SIDE = 40;
+
     function normalizeRectBounds(bounds) {
         if (!bounds || typeof bounds !== "object") return null;
         const minX = Math.min(bounds.minX, bounds.maxX);
@@ -263,6 +263,11 @@ function main() {
         const minY = Math.min(bounds.minY, bounds.maxY);
         const maxY = Math.max(bounds.minY, bounds.maxY);
         if (![minX, maxX, minY, maxY].every(n => typeof n === "number" && Number.isFinite(n))) {
+            return null;
+        }
+        const width = maxX - minX + 1;
+        const height = maxY - minY + 1;
+        if (width > MAX_RECT_SIDE || height > MAX_RECT_SIDE) {
             return null;
         }
         return { minX, maxX, minY, maxY };
@@ -288,19 +293,21 @@ function main() {
             baseZ: el.baseZ,
             trackType: el.trackType,
             ride: el.ride,
-            sequenceIndex: el.sequence,
+            sequenceIndex: el.sequenceIndex != null ? el.sequenceIndex : el.sequence,
         };
     }
 
     function summarizeEntranceElement(tileX, tileY, el) {
         // EntranceElement.object is ENTRANCE_TYPE: 0=ride entrance, 1=ride exit, 2=park entrance.
+        // Native summaries may already expose isExit.
+        const isExit = typeof el.isExit === "boolean" ? el.isExit : el.object === 1;
         return {
             tileX,
             tileY,
             baseZ: el.baseZ,
             ride: el.ride,
             station: el.station,
-            isExit: el.object === 1,
+            isExit,
         };
     }
 
@@ -362,6 +369,16 @@ function main() {
             .map(serializeGuestNearTile);
     }
 
+    function summarizeRectElement(type, el) {
+        const tileX = typeof el.tileX === "number" ? el.tileX : null;
+        const tileY = typeof el.tileY === "number" ? el.tileY : null;
+        if (tileX == null || tileY == null) return null;
+        if (type === "footpath") return summarizeFootpathElement(tileX, tileY, el);
+        if (type === "track") return summarizeTrackElement(tileX, tileY, el);
+        if (type === "entrance") return summarizeEntranceElement(tileX, tileY, el);
+        return null;
+    }
+
     async function handleGetElementsInRect(params) {
         const { type, bounds: rawBounds } = params || {};
         if (typeof type !== "string" || !rawBounds) {
@@ -371,11 +388,12 @@ function main() {
             throw new Error("type must be footpath, track, or entrance");
         }
         const bounds = normalizeRectBounds(rawBounds);
-        if (!bounds) throw new Error("Invalid bounds");
+        if (!bounds) throw new Error("Invalid or oversized bounds (max 40×40)");
         // Native map.getElementsInRect was proposed in #26675 but not merged; keep
         // a compatible endpoint via tile scan (and prefer native if it lands later).
         if (typeof map.getElementsInRect === "function") {
-            return map.getElementsInRect(type, bounds);
+            const elements = map.getElementsInRect(type, bounds) || [];
+            return elements.map(el => summarizeRectElement(type, el)).filter(Boolean);
         }
         return scanElementsInRect(type, bounds);
     }
@@ -386,7 +404,7 @@ function main() {
             throw new Error("Missing parameter: bounds");
         }
         const bounds = normalizeRectBounds(rawBounds);
-        if (!bounds) throw new Error("Invalid bounds");
+        if (!bounds) throw new Error("Invalid or oversized bounds (max 40×40)");
         if (typeof map.getGuestsInRect === "function") {
             return map.getGuestsInRect(bounds).map(serializeGuestNearTile);
         }

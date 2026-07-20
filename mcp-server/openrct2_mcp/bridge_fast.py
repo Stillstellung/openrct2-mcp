@@ -95,6 +95,7 @@ def ride_summary_from_raw(raw: dict[str, Any]) -> dict[str, Any]:
         "price": primary_ride_price(raw.get("price")),
         "satisfaction": raw.get("satisfaction"),
         "breakdown": maintenance["breakdown"],
+        "active_breakdown": maintenance["active_breakdown"],
         "downtime": maintenance["downtime"],
         "reliability": maintenance["reliability"],
         "age_months": maintenance["age_months"],
@@ -121,7 +122,7 @@ def get_ride_raw(game: RCT2, ride_id: int) -> dict[str, Any] | None:
     return resp["payload"]
 
 
-def _merge_ride_builder_maintenance(
+def merge_ride_builder_maintenance(
     summary: dict[str, Any],
     ride_builder_row: dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -150,7 +151,7 @@ def _merge_ride_builder_maintenance(
     return merged
 
 
-def _load_ride_builder_maintenance_index(ride_builder: RideBuilderClient) -> dict[int, dict[str, Any]]:
+def load_ride_builder_maintenance_index(ride_builder: RideBuilderClient) -> dict[int, dict[str, Any]]:
     try:
         rows = ride_builder.call("listRideMaintenance")
     except Exception:
@@ -167,13 +168,13 @@ def _load_ride_builder_maintenance_index(ride_builder: RideBuilderClient) -> dic
 def list_rides_fast(game: RCT2, ride_builder: RideBuilderClient) -> list[dict[str, Any]]:
     """List all rides using listAllRides + per-id queries (scales with ride count, not map size)."""
     index = ride_builder.call("listAllRides")
-    rb_rows = _load_ride_builder_maintenance_index(ride_builder)
+    rb_rows = load_ride_builder_maintenance_index(ride_builder)
     summaries: list[dict[str, Any]] = []
     for entry in index:
         raw = get_ride_raw(game, entry["id"])
         if raw is not None:
             summary = ride_summary_from_raw(raw)
-            summaries.append(_merge_ride_builder_maintenance(summary, rb_rows.get(entry["id"])))
+            summaries.append(merge_ride_builder_maintenance(summary, rb_rows.get(entry["id"])))
     summaries.sort(key=lambda r: r.get("excitement") or 0, reverse=True)
     return summaries
 

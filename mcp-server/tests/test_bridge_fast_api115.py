@@ -2,7 +2,7 @@
 
 import unittest
 
-from openrct2_mcp.bridge_fast import _merge_ride_builder_maintenance
+from openrct2_mcp.bridge_fast import merge_ride_builder_maintenance
 
 
 class MergeRideBuilderMaintenanceTests(unittest.TestCase):
@@ -14,7 +14,7 @@ class MergeRideBuilderMaintenanceTests(unittest.TestCase):
             "queueTime": 12,
             "stationQueueTimes": [{"index": 0, "queueTime": 12}],
         }
-        merged = _merge_ride_builder_maintenance(summary, row)
+        merged = merge_ride_builder_maintenance(summary, row)
         self.assertEqual(merged["reliability"], 72.5)
         self.assertEqual(merged["guest_count"], 4)
         self.assertEqual(merged["queue_time"], 12)
@@ -23,8 +23,14 @@ class MergeRideBuilderMaintenanceTests(unittest.TestCase):
     def test_keeps_bridge_values_when_present(self):
         summary = {"id": 1, "reliability": 90.0}
         row = {"reliability": 50.0}
-        merged = _merge_ride_builder_maintenance(summary, row)
+        merged = merge_ride_builder_maintenance(summary, row)
         self.assertEqual(merged["reliability"], 90.0)
+
+    def test_none_ride_builder_row_returns_summary_unchanged(self):
+        summary = {"id": 2, "reliability": 88.0, "downtime": 3}
+        merged = merge_ride_builder_maintenance(summary, None)
+        self.assertIs(merged, summary)
+        self.assertEqual(merged, {"id": 2, "reliability": 88.0, "downtime": 3})
 
 
 if __name__ == "__main__":
