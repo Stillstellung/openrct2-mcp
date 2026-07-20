@@ -32,9 +32,9 @@ class GameTimeStatusTests(unittest.TestCase):
 
     class _FailingRideBuilder:
         def call(self, endpoint: str):
-            from openrct2_mcp.connection import ConnectionError
+            from openrct2_mcp.connection import ConnectionError as PluginConnectionError
 
-            raise ConnectionError("plugin unavailable")
+            raise PluginConnectionError("plugin unavailable")
 
     def test_prefers_plugin_game_speed(self):
         from openrct2_mcp.time_tools import game_time_status
