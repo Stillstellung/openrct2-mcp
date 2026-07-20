@@ -1364,7 +1364,7 @@ def get_map_elements_in_rect_tool(
 ) -> str:
     """Bulk-export footpath, track, or entrance tiles in a region via ride-builder.
 
-    element_type: footpath, track, or entrance. Region is capped at 40×40 tiles.
+    element_type: footpath, track, or entrance. Region is capped at 40x40 tiles.
     Footpath summaries include isAdditionFull when the OpenRCT2 build has #26675.
     """
     with game_context():

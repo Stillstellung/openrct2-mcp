@@ -38,10 +38,12 @@ def get_elements_in_rect(
         "maxY": y + height - 1,
     }
     elements = ride_builder.call("getElementsInRect", {"type": element_type, "bounds": bounds})
+    if not isinstance(elements, list):
+        elements = []
     return {
         "type": element_type,
         "bounds": bounds,
-        "count": len(elements) if isinstance(elements, list) else 0,
+        "count": len(elements),
         "elements": elements,
     }
 

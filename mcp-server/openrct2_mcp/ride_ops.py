@@ -108,6 +108,8 @@ def _ride_occupancy_from_plugin(
         row = ride_builder.call("getRideMaintenance", {"rideId": ride_id})
     except Exception:
         return None, None
+    if not isinstance(row, dict):
+        return None, None
     guest_count = row.get("guestCount")
     is_empty = row.get("isEmpty")
     gc = int(guest_count) if guest_count is not None else None
@@ -268,7 +270,16 @@ def refurbish_ride(
                 )
             waited_ticks += tick_step
 
-    detail = str(last_error) if last_error else "unknown error"
+    if last_error is not None:
+        detail = str(last_error)
+    else:
+        guest_count, is_empty = _ride_occupancy_from_plugin(ride_builder, ride_id)
+        if guest_count is not None and guest_count > 0:
+            detail = f"ride still occupied with {guest_count} guest(s)"
+        elif is_empty is False:
+            detail = "ride still occupied (plugin reported isEmpty=false)"
+        else:
+            detail = "unknown error"
     raise ValueError(
         f"Could not refurbish ride {ride_id} after fast-forwarding {waited_ticks} ticks "
         f"(~{waited_ticks // TICKS_PER_DAY} in-game days; ride must be closed and empty). "

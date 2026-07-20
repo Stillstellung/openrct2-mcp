@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -11,6 +12,8 @@ from pyrct2.world._tile import Tile
 from openrct2_mcp.bridge_fast import get_ride_raw, list_rides_fast
 from openrct2_mcp.connection import RideBuilderClient
 from openrct2_mcp.map_region import get_path_graph
+
+logger = logging.getLogger(__name__)
 
 
 def _ride_tile_map(game: RCT2, ride_builder: RideBuilderClient) -> dict[int, list[int]]:
@@ -95,7 +98,13 @@ def sample_guests_near_tile(
                     "source": "plugin",
                 }
         except Exception:
-            pass
+            logger.debug(
+                "getGuestsInRect failed near tile (%s, %s) radius=%s; falling back to bridge scan",
+                tile_x,
+                tile_y,
+                radius,
+                exc_info=True,
+            )
 
     # Bridge has no spatial guest query; sample low ids as heuristic peep pool.
     found: list[dict] = []

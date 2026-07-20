@@ -253,22 +253,25 @@ function main() {
         };
     }
 
-    // Match mcp-server map_region.MAX_REGION_SIDE — reject oversized socket clients.
+    // Match mcp-server map_region.MAX_REGION_SIDE — clamp oversized socket clients.
     const MAX_RECT_SIDE = 40;
 
     function normalizeRectBounds(bounds) {
         if (!bounds || typeof bounds !== "object") return null;
-        const minX = Math.min(bounds.minX, bounds.maxX);
-        const maxX = Math.max(bounds.minX, bounds.maxX);
-        const minY = Math.min(bounds.minY, bounds.maxY);
-        const maxY = Math.max(bounds.minY, bounds.maxY);
+        let minX = Math.min(bounds.minX, bounds.maxX);
+        let maxX = Math.max(bounds.minX, bounds.maxX);
+        let minY = Math.min(bounds.minY, bounds.maxY);
+        let maxY = Math.max(bounds.minY, bounds.maxY);
         if (![minX, maxX, minY, maxY].every(n => typeof n === "number" && Number.isFinite(n))) {
             return null;
         }
         const width = maxX - minX + 1;
         const height = maxY - minY + 1;
-        if (width > MAX_RECT_SIDE || height > MAX_RECT_SIDE) {
-            return null;
+        if (width > MAX_RECT_SIDE) {
+            maxX = minX + MAX_RECT_SIDE - 1;
+        }
+        if (height > MAX_RECT_SIDE) {
+            maxY = minY + MAX_RECT_SIDE - 1;
         }
         return { minX, maxX, minY, maxY };
     }
@@ -388,7 +391,7 @@ function main() {
             throw new Error("type must be footpath, track, or entrance");
         }
         const bounds = normalizeRectBounds(rawBounds);
-        if (!bounds) throw new Error("Invalid or oversized bounds (max 40×40)");
+        if (!bounds) throw new Error("Invalid bounds");
         // Native map.getElementsInRect was proposed in #26675 but not merged; keep
         // a compatible endpoint via tile scan (and prefer native if it lands later).
         if (typeof map.getElementsInRect === "function") {
@@ -404,7 +407,7 @@ function main() {
             throw new Error("Missing parameter: bounds");
         }
         const bounds = normalizeRectBounds(rawBounds);
-        if (!bounds) throw new Error("Invalid or oversized bounds (max 40×40)");
+        if (!bounds) throw new Error("Invalid bounds");
         if (typeof map.getGuestsInRect === "function") {
             return map.getGuestsInRect(bounds).map(serializeGuestNearTile);
         }
