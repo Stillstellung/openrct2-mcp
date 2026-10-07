@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from pyrct2._generated.enums import ClearableItems, Colour, Direction
+from pyrct2._generated.objects import FootpathSurfaceInfo
 from pyrct2.client import RCT2
 from pyrct2.objects import FootpathAdditions
 from pyrct2.world._tile import Tile
@@ -97,6 +98,44 @@ class _SpacingGrid:
 def _resolve_object_index(game: RCT2, obj_type: str, identifier: str) -> int:
     data = game._query("get_object", {"type": obj_type, "identifier": identifier})
     return int(data["index"])
+
+
+def list_footpath_surfaces(game: RCT2) -> list[dict[str, Any]]:
+    """Footpath surfaces loaded in the park (index, identifier, name, queue)."""
+    return [
+        {
+            "index": o["index"],
+            "identifier": o["identifier"],
+            "name": o.get("name") or o["identifier"],
+            "queue": "queue" in o["identifier"],
+        }
+        for o in game._query("get_objects", {"type": "footpath_surface"})
+    ]
+
+
+def resolve_footpath_surface(game: RCT2, surface: str) -> FootpathSurfaceInfo:
+    """Match a loaded footpath surface by identifier or name.
+
+    Case-insensitive: an exact identifier/name match wins, otherwise the
+    text must appear in exactly one surface (e.g. "red and brown tiled").
+    """
+    surfaces = list_footpath_surfaces(game)
+    wanted = surface.strip().lower()
+    exact = [s for s in surfaces if wanted in (s["identifier"].lower(), s["name"].lower())]
+    partial = [s for s in surfaces if wanted in s["identifier"].lower() or wanted in s["name"].lower()]
+    matches = exact or partial
+    if len(matches) != 1:
+        problem = "matches several" if matches else "matches no"
+        loaded = ", ".join(f"{s['identifier']} ({s['name']})" for s in surfaces)
+        raise ValueError(f"surface {surface!r} {problem} loaded footpath surface. Loaded: {loaded}")
+    match = matches[0]
+    return FootpathSurfaceInfo(
+        identifier=match["identifier"],
+        name=match["name"],
+        is_queue=match["queue"],
+        no_slope_railings=False,
+        editor_only=False,
+    )
 
 
 def list_scenery_objects(

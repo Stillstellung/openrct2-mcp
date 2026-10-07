@@ -125,12 +125,14 @@ from openrct2_mcp.map_region import (
 from openrct2_mcp.park_health import park_health_report
 from openrct2_mcp.scenery_tools import (
     apply_theme_preset,
+    list_footpath_surfaces,
     list_scenery_objects,
     paint_terrain,
     place_banner,
     place_large_scenery,
     place_small_scenery,
     remove_scenery_at_tile,
+    resolve_footpath_surface,
     fill_missing_benches_and_bins,
     replace_full_bins_and_broken_benches,
     repair_vandalized_footpath_additions,
@@ -400,15 +402,23 @@ def manage_paths(
     queue: bool = False,
     addition: str | None = None,
     repair_gaps: bool = True,
+    surface: str | None = None,
 ) -> str:
-    """Place or remove paths. action: place_line | place_tile | place_addition | remove_tile | remove_line.
+    """Place or remove paths. action: place_line | place_tile | place_addition | remove_tile | remove_line | list_surfaces.
 
     place_line / place_tile also fill one-tile gaps beside the new tiles. Pass
     repair_gaps=false for exact shapes (hollow squares, lettering) where those
     gaps are intentional.
+
+    surface: footpath surface for place_line / place_tile, by identifier or
+    name (e.g. "red and brown tiled"); omit for the scenario default.
+    list_surfaces shows the surfaces loaded in this park.
     """
     with game_context() as game:
+        if action == "list_surfaces":
+            return _json(list_footpath_surfaces(game))
         ensure_paused(game)
+        surface_info = resolve_footpath_surface(game, surface) if surface else None
         if action == "remove_tile":
             if tile_x is None or tile_y is None:
                 raise ValueError("remove_tile requires tile_x and tile_y")
@@ -454,11 +464,11 @@ def manage_paths(
                 repair_one_tile_gaps,
             )
 
-            result = game.paths.place_line(Tile(from_x, from_y), Tile(to_x, to_y))
+            result = game.paths.place_line(Tile(from_x, from_y), Tile(to_x, to_y), surface=surface_info)
             x1, x2 = sorted([from_x, to_x])
             y1, y2 = sorted([from_y, to_y])
             line = [(tx, ty) for tx in range(x1, x2 + 1) for ty in range(y1, y2 + 1)]
-            gap_repair = repair_one_tile_gaps(game, near=line) if repair_gaps else None
+            gap_repair = repair_one_tile_gaps(game, near=line, surface=surface_info) if repair_gaps else None
             return _json(
                 {
                     "placed": result.succeeded,
@@ -472,8 +482,10 @@ def manage_paths(
                 raise ValueError("place_tile requires tile_x and tile_y")
             from openrct2_mcp.path_connectivity import analyze_path_connectivity, repair_one_tile_gaps
 
-            game.paths.place(Tile(tile_x, tile_y), queue=queue)
-            gap_repair = repair_one_tile_gaps(game, near=[(tile_x, tile_y)]) if repair_gaps else None
+            game.paths.place(Tile(tile_x, tile_y), queue=queue, surface=surface_info)
+            gap_repair = (
+                repair_one_tile_gaps(game, near=[(tile_x, tile_y)], surface=surface_info) if repair_gaps else None
+            )
             return _json(
                 {
                     "placed": True,
@@ -489,7 +501,9 @@ def manage_paths(
             add_obj = getattr(FootpathAdditions, addition.upper())
             game.paths.place_addition(Tile(tile_x, tile_y), add_obj)
             return _json({"placed": True, "addition": addition})
-        raise ValueError("action must be place_line, place_tile, or place_addition")
+        raise ValueError(
+            "action must be place_line, place_tile, place_addition, remove_tile, remove_line, or list_surfaces"
+        )
 
 
 @mcp.tool()

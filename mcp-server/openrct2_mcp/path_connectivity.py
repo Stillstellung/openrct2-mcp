@@ -6,6 +6,7 @@ from collections import deque
 from collections.abc import Iterable
 from typing import Any
 
+from pyrct2._generated.objects import FootpathSurfaceInfo
 from pyrct2.client import RCT2
 from pyrct2.world._tile import Tile
 
@@ -170,8 +171,12 @@ def repair_one_tile_gaps(
     *,
     dry_run: bool = False,
     near: Iterable[tuple[int, int]] | None = None,
+    surface: FootpathSurfaceInfo | None = None,
 ) -> dict[str, Any]:
-    """Place footpath on one-tile gaps (park-wide, or only beside ``near`` tiles)."""
+    """Place footpath on one-tile gaps (park-wide, or only beside ``near`` tiles).
+
+    ``surface`` sets the fill surface (default: the scenario's default path).
+    """
     path_tiles = collect_path_tiles(game)
     gaps = find_one_tile_gaps(path_tiles, near=near)
     placed: list[list[int]] = []
@@ -181,7 +186,7 @@ def repair_one_tile_gaps(
             placed.append([gx, gy])
             continue
         try:
-            game.paths.place(Tile(gx, gy), queue=False)
+            game.paths.place(Tile(gx, gy), queue=False, surface=surface)
             placed.append([gx, gy])
             path_tiles.add((gx, gy))
         except Exception:

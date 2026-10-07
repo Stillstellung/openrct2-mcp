@@ -76,5 +76,40 @@ class SpacingGridTests(unittest.TestCase):
         self.assertIsNone(scenery_tools._FOOTPATH_ADDITION_IDENT_MAP)
 
 
+class _SurfaceGame:
+    SURFACES = [
+        {"index": 0, "identifier": "rct1.footpath_surface.tarmac", "name": "Tarmac Footpath (Sloped)"},
+        {"index": 8, "identifier": "rct1aa.footpath_surface.tarmac_red", "name": "Red Tarmac Footpath (Sloped)"},
+        {"index": 10, "identifier": "rct1ll.footpath_surface.tiles_red", "name": "Red and Brown Tiled Footpath"},
+        {"index": 12, "identifier": "rct1aa.footpath_surface.queue_red", "name": "Red Queue (Sloped)"},
+    ]
+
+    def _query(self, endpoint, params):
+        assert endpoint == "get_objects" and params == {"type": "footpath_surface"}
+        return self.SURFACES
+
+
+class FootpathSurfaceTests(unittest.TestCase):
+    def test_list_marks_queue_surfaces(self):
+        queues = [s["identifier"] for s in scenery_tools.list_footpath_surfaces(_SurfaceGame()) if s["queue"]]
+        self.assertEqual(queues, ["rct1aa.footpath_surface.queue_red"])
+
+    def test_resolve_by_identifier_or_partial_name(self):
+        game = _SurfaceGame()
+        for text in ("rct1ll.footpath_surface.tiles_red", "Red and Brown Tiled", "tiles_red"):
+            surface = scenery_tools.resolve_footpath_surface(game, text)
+            self.assertEqual(surface.identifier, "rct1ll.footpath_surface.tiles_red")
+
+    def test_exact_name_beats_partial_matches(self):
+        surface = scenery_tools.resolve_footpath_surface(_SurfaceGame(), "tarmac footpath (sloped)")
+        self.assertEqual(surface.identifier, "rct1.footpath_surface.tarmac")
+
+    def test_ambiguous_or_unknown_surface_lists_loaded(self):
+        for text in ("red", "space"):
+            with self.assertRaises(ValueError) as ctx:
+                scenery_tools.resolve_footpath_surface(_SurfaceGame(), text)
+            self.assertIn("rct1ll.footpath_surface.tiles_red", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
