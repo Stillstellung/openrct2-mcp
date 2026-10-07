@@ -2,45 +2,63 @@
 
 [![Tests](https://github.com/BenDaSpur/openrct2-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/BenDaSpur/openrct2-mcp/actions/workflows/test.yml)
 
-Bridge a **running** OpenRCT2 game to Cursor (or any MCP client) so AI agents can read park state, optimize parks, and build roller coasters.
+Bridge a **running** OpenRCT2 game to Claude Code (or any MCP client) so AI agents can read park state, optimize parks, and build roller coasters. Runs on Windows and macOS.
 
 **Quick links:** [License](LICENSE) · [Issues](https://github.com/BenDaSpur/openrct2-mcp/issues) · [Third-party notices](NOTICE)
 
 ## Prerequisites
 
-- OpenRCT2 **0.5.x** with RCT2 game files installed
-- Python **3.11+**
-- Node.js **18+** (plugin packaging only)
+- OpenRCT2 **0.5.x** with RCT2 game files installed (run it once so `config.ini` exists)
+- Python **3.11+** (on Windows, a python.org install is preferred over the Microsoft Store build)
+- [Claude Code](https://code.claude.com/) (or another MCP client)
 
-This repo was tested against OpenRCT2 v0.5.1 on macOS.
+Tested against OpenRCT2 v0.5.1 on macOS and v0.5.5 on Windows 11.
 
 ## Quick setup
 
+Close OpenRCT2 before running the install script: the game rewrites `config.ini` when it exits. The script is safe to re-run, for example after pulling changes to `ride-builder.js`.
+
+### Windows (PowerShell)
+
+```powershell
+# 1. venv, MCP server, openrct2-bridge + ride-builder plugins, hot reload, .mcp.json
+#    -OpenRCT2Path: your OpenRCT2 folder (defaults to C:\Program Files\OpenRCT2)
+powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -OpenRCT2Path "D:\Games\OpenRCT2"
+
+# 2. Launch OpenRCT2 and load a park, then verify both plugins answer
+.venv\Scripts\python.exe scripts\check_connection.py
+
+# Optional: automated headless smoke test (close the game window first)
+.venv\Scripts\python.exe scripts\verify-e2e.py
+```
+
+### macOS
+
 ```bash
-# 1. Install Python deps + openrct2-bridge plugin
+# 1. venv, MCP server, openrct2-bridge + ride-builder plugins, hot reload, .mcp.json
 chmod +x scripts/*.sh
 ./scripts/install-bridge.sh
 
-# 2. Install ride-builder coaster plugin
-./scripts/build-plugins.sh
-
-# 3. Launch OpenRCT2, load a park save
-#    Check the in-game console for:
-#      - Bridge port (starts at 20020)
-#      - Ride-builder port (starts at 20021)
-
-# 4. Verify connections (with OpenRCT2 running and a park loaded)
+# 2. Launch OpenRCT2 and load a park, then verify both plugins answer
 ./scripts/check-connection.sh
 
-# Optional: automated headless smoke test
+# Optional: automated headless smoke test (close the game window first)
 .venv/bin/python scripts/verify-e2e.py
 ```
 
-## Cursor MCP
+The bridge listens on port 20020 and ride-builder on 20021 (both bind to 127.0.0.1 only). Run **one** OpenRCT2 instance at a time: on Windows a second instance can bind the same ports instead of moving to the next free one.
 
-Project MCP config lives at [`.cursor/mcp.json`](.cursor/mcp.json) (portable template: [`.cursor/mcp.json.example`](.cursor/mcp.json.example)). Paths use `${workspaceFolder}` and set `PYTHONPATH` to `mcp-server/` so `python -m openrct2_mcp` resolves without a global install. Copy or adapt the example if your editor does not expand `${workspaceFolder}`.
+## Claude Code
 
-Reload MCP servers in Cursor after OpenRCT2 is running with a loaded park.
+The install script writes `.mcp.json` in the repo root (gitignored, because it holds the absolute path to this machine's venv interpreter). See [`.mcp.json.example`](.mcp.json.example) for its shape; on macOS the command is `.venv/bin/python`.
+
+1. Launch OpenRCT2 and load a park.
+2. Run `claude` in the repo root and approve the `openrct2` project MCP server when prompted.
+3. Run `/mcp` to confirm `openrct2` is connected, then ask for `openrct2_status`.
+
+The server reconnects on its own when the game is closed and relaunched. Use `/mcp` to restart the server itself, for example after pulling changes to its Python code.
+
+The [park director skill](.claude/skills/openrct2-park-director/SKILL.md) is picked up automatically from `.claude/skills/`.
 
 **Note:** End-to-end tools (live park mutations, vision capture, coaster placement) require a running OpenRCT2 instance with plugins loaded. CI runs offline unit tests only.
 
@@ -53,8 +71,8 @@ Example prompts:
 ## Architecture
 
 ```
-Cursor AI  --MCP-->  Python MCP server  --TCP-->  openrct2-bridge (park ops)
-                                              `--TCP-->  ride-builder (coasters)
+Claude Code  --MCP-->  Python MCP server  --TCP-->  openrct2-bridge (park ops)
+                                                `--TCP-->  ride-builder (coasters)
 ```
 
 | Component | Role |
@@ -137,7 +155,7 @@ Use `get_tile_height_tool` for a single tile; `coaster_height_context_tool` for 
 3. Optional: `coaster_prepare_corridor_tool(dry_run=true)` then apply with `confirm_destructive=true`
 4. `coaster_build_perimeter(dry_run=true)` → `coaster_build_perimeter` — execute build
 
-Terminal debug (no MCP): `.venv/bin/python scripts/plan-coaster-route.py --simulate --inset 18`
+Terminal debug (no MCP): `.venv/bin/python scripts/plan-coaster-route.py --simulate --inset 18` (Windows: `.venv\Scripts\python.exe scripts\plan-coaster-route.py ...`; set `PYTHONUTF8=1` if output is piped)
 
 ## Vision (screenshots + spatial context)
 
@@ -155,15 +173,17 @@ The MCP server can **see** the park window while also returning structured map d
 3. Apply changes via `manage_paths`, `place_stall`, `coaster_*`, etc.
 4. `capture_game_view` — verify visually
 
-**macOS setup:** System Settings → Privacy & Security → **Screen Recording** → enable **Cursor** (and Terminal if testing from CLI). Without this, tools fall back to text-only context.
+**Windows:** no setup needed. The window is captured with `PrintWindow`, so it works when other windows cover the game, and the game never takes focus from your terminal. Fullscreen OpenRCT2 minimizes itself when it loses focus; `capture_game_view` then shows it briefly without activating it, captures it, and minimizes it again. To keep the game visible beside your terminal, play windowed or turn off **Options → Display → Minimise fullscreen on focus loss**. Headless games have no window to capture.
+
+**macOS setup:** System Settings → Privacy & Security → **Screen Recording** → enable the terminal app running Claude Code. Without this, tools fall back to text-only context.
 
 Set `OPENRCT2_VISION_MAX_WIDTH=1280` (default) to limit screenshot size.
 
 ## Agent skill
 
-See [`skills/openrct2-park-director/SKILL.md`](skills/openrct2-park-director/SKILL.md) for orchestration workflows (perimeter coasters, cute themes, staff patrol).
+See [`.claude/skills/openrct2-park-director/SKILL.md`](.claude/skills/openrct2-park-director/SKILL.md) for orchestration workflows (perimeter coasters, cute themes, staff patrol). Claude Code loads it automatically in this repo.
 
-**Reload ride-builder after updates:** `./scripts/build-plugins.sh` then restart OpenRCT2 (plugin loads at launch).
+**Reload ride-builder after updates:** re-run the install script (or `./scripts/build-plugins.sh` on macOS), then restart OpenRCT2 or rely on hot reloading.
 
 ### Ride operations (P6)
 
@@ -209,49 +229,54 @@ The MCP server avoids the worst patterns:
 
 `list_guests` defaults to **guest count only**. Pass `full_scan=true` only if you accept a long wait.
 
-Reload the MCP server after pulling performance updates.
+Reload the MCP server (`/mcp` in Claude Code) after pulling performance updates.
 
 ## Configuration
 
-Environment variables (set in `.cursor/mcp.json`):
+Environment variables for the MCP server (set in the `env` block of `.mcp.json`):
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `OPENRCT2_BRIDGE_PORT` | `20020` | Bridge plugin TCP port |
-| `OPENRCT2_RIDE_BUILDER_PORT` | `20021` | Ride-builder TCP port |
+| `OPENRCT2_BRIDGE_PORT` | `20020` | First bridge plugin TCP port to scan |
+| `OPENRCT2_RIDE_BUILDER_PORT` | `20021` | First ride-builder TCP port to scan |
 | `OPENRCT2_BRIDGE_TIMEOUT` | `30` | Per-request bridge timeout (seconds) |
 | `OPENRCT2_RIDE_BUILDER_TIMEOUT` | `15` | Per-request ride-builder timeout (seconds) |
+| `OPENRCT2_VISION_MAX_WIDTH` | `1280` | Screenshot width limit (pixels) |
+| `OPENRCT2_USER_PATH` | per OS (below) | OpenRCT2 user data folder (also read by the install scripts) |
 
-OpenRCT2 `config.ini` recommendations:
+Used by the install scripts and `verify-e2e.py`:
 
+| Variable | Purpose |
+|----------|---------|
+| `PYRCT2_OPENRCT2_PATH` | OpenRCT2 binary for `pyrct2 setup` and headless launches. `install-windows.ps1` sets it from `-OpenRCT2Path` (it must be `openrct2.com` on Windows). |
+
+OpenRCT2 `config.ini` location:
+
+- **Windows:** `Documents\OpenRCT2\config.ini`
 - **macOS:** `~/Library/Application Support/OpenRCT2/config.ini`
 - **Linux:** `~/.config/OpenRCT2/config.ini`
 
-Override the user data directory with `OPENRCT2_USER_PATH` (used by `install-bridge.sh`).
+The install scripts enable plugin hot reloading:
 
 ```ini
 [plugin]
 enable_hot_reloading = true
 ```
 
-`install-bridge.sh` enables hot reloading automatically.
-
 ## Contributing
 
-1. `./scripts/install-bridge.sh` — Python venv, bridge plugin, hot reload
-2. `./scripts/build-plugins.sh` — ride-builder plugin
-3. `pytest mcp-server/tests -q` — offline unit tests (no OpenRCT2 required)
-4. `.venv/bin/python scripts/verify-e2e.py` — optional smoke test with OpenRCT2 running
+1. Run the install script for your OS (see [Quick setup](#quick-setup))
+2. `pytest mcp-server/tests -q` — offline unit tests (no OpenRCT2 required); CI runs them on Ubuntu and Windows
+3. `scripts/verify-e2e.py` with the venv interpreter — optional headless smoke test
 
 ## Development
 
 ```bash
-# Run MCP server manually
-export PYTHONPATH=mcp-server
-.venv/bin/python -m openrct2_mcp
+# Run the MCP server manually (stdio)
+.venv/bin/python -m openrct2_mcp          # Windows: .venv\Scripts\python.exe -m openrct2_mcp
 
-# Rebuild ride-builder after edits
-./scripts/build-plugins.sh
+# Re-install ride-builder after edits (also re-runs the other post-install steps)
+.venv/bin/python -m openrct2_mcp.install  # Windows: .venv\Scripts\python.exe -m openrct2_mcp.install
 # Reload plugin in-game (hot reload) or restart OpenRCT2
 ```
 

@@ -4,7 +4,6 @@
   "private": true,
   "description": "OpenRCT2 coaster builder plugin for AI/MCP control",
   "scripts": {
-    "build": "mkdir -p dist && cp src/ride-builder.js dist/ride-builder.js",
-    "install-plugin": "npm run build && cp dist/ride-builder.js \"$HOME/Library/Application Support/OpenRCT2/plugin/ride-builder.js\""
+    "build": "node -e \"const fs = require('fs'); fs.mkdirSync('dist', { recursive: true }); fs.copyFileSync('src/ride-builder.js', 'dist/ride-builder.js');\""
   }
 }

@@ -1,11 +1,11 @@
 {
   "mcpServers": {
     "openrct2": {
-      "command": "${workspaceFolder}/.venv/bin/python",
+      "type": "stdio",
+      "command": "C:\\path\\to\\openrct2-mcp\\.venv\\Scripts\\python.exe",
       "args": ["-m", "openrct2_mcp"],
-      "cwd": "${workspaceFolder}",
       "env": {
-        "PYTHONPATH": "${workspaceFolder}/mcp-server",
+        "PYTHONUTF8": "1",
         "OPENRCT2_BRIDGE_PORT": "20020",
         "OPENRCT2_RIDE_BUILDER_PORT": "20021"
       }

@@ -72,7 +72,7 @@ Compact sites ≤12×12 with high coverage default to **`rectangle`** builds. La
 2. Rectangle loops steer by **live endpoint** at bbox corners (~2 tile turn margin)
 3. Never rank slopes during exit/entry buffers
 
-On failure, report `best_partial`, `ring_unowned`, screenshot via `capture_game_view`, and suggest `buy_land` if unowned ring tiles blocked the build.
+On failure, report `best_partial`, `ring_unowned`, screenshot via `capture_game_view`, and suggest `buy_land_tool` if unowned ring tiles blocked the build.
 
 ## Custom Coaster Designer (AI designs the track from a prompt)
 
@@ -196,5 +196,13 @@ Use low-level survey tools only when auto-build fails or user asks for step-by-s
 
 ## Vision
 
-- macOS: grant **Screen Recording** to Cursor
+- `capture_game_view` screenshots the OpenRCT2 window (Windows and macOS; not available for headless games)
+- Windows: works when the window is covered and never takes focus; a minimized (e.g. fullscreen, unfocused) game needs `bring_to_front=true`, which un-minimizes it just for the capture
+- macOS: grant **Screen Recording** to the terminal running Claude Code
 - Use `inspect_area_at_tile` for ASCII path grids + optional screenshot
+
+## Connection troubleshooting
+
+- `openrct2_status` reports `connected: false` with the reason; the server reconnects automatically after the game restarts
+- Run only one OpenRCT2 instance at a time (both would claim the same plugin ports)
+- If the server itself is down, reconnect it with `/mcp` in Claude Code

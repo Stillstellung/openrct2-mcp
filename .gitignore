@@ -3,7 +3,6 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
-.cursor/*.local.*
 .mypy_cache/
 .ruff_cache/
 .coverage
@@ -14,3 +13,6 @@ build/
 node_modules/
 plugins/ride-builder/dist/
 *.log
+# Generated per machine by the install scripts (absolute venv path)
+.mcp.json
+.claude/settings.local.json
