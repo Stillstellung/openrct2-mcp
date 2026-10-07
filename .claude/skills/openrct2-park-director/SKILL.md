@@ -194,6 +194,16 @@ Use low-level survey tools only when auto-build fails or user asks for step-by-s
 | Staff on paths | `get_path_graph_tool` → `optimize_staff_coverage_tool` → `park_health_report_tool` |
 | Tune one ride | `get_ride` → `set_ride_price` / inspection via ride settings |
 
+## Footpaths and path shapes
+
+- **Ask filled or hollow** when a shape request is ambiguous: "a square path area" can mean a solid plaza or an outline (one user meant the outline)
+- **Gap repair**: `manage_paths` `place_line` / `place_tile` fill one-tile gaps beside the tiles just placed. Pass `repair_gaps=false` for exact shapes (outlines, lettering) and when building next to a shape whose 1-tile gaps are intentional. Paths the user draws in the game UI are never touched
+- `repair_path_connectivity_tool` fills gaps **park-wide**, including inside outlines and lettering; run it with `dry_run=true` first
+- `find_open_land_tool` only checks flat + owned + no track. It ignores footpaths and trees, so confirm a site with `get_map_region_tool` (ascii `P` path, `s` scenery) before building
+- **Surfaces**: `manage_paths` always uses the scenario's default surface. For a specific one (e.g. Red and Brown Tiled, `rct1ll.footpath_surface.tiles_red`), list loaded surfaces with the bridge query `get_objects` `{"type": "footpath_surface"}`, then place from a script with `GameSession().game.paths.place(tile, surface=FootpathSurfaceInfo(identifier=...))`
+- **Decorative paths** (lettering, path art) should stay at least 1 tile from guest paths so they don't join the network. They then show as "unreachable" in connectivity reports, which is expected
+- **Drawing text**: screen direction depends on camera rotation, so work out which map axes run right and up from a screenshot of known path tiles before placing. Preview the bitmap first, then verify with `inspect_area_at_tile`. 3-wide glyphs with a 5-tile x-height and 1-tile letter gaps read well (about 12 tiles per letter)
+
 ## Vision
 
 - `capture_game_view` screenshots the OpenRCT2 window (Windows and macOS; not available for headless games)
