@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Ben Spurlock" }]
 dependencies = [
-    "mcp>=1.0.0",
+    "mcp>=1.2,<2",
     "pyrct2>=0.9.8",
 ]
 
