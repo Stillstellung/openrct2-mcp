@@ -399,8 +399,14 @@ def manage_paths(
     tile_y: int | None = None,
     queue: bool = False,
     addition: str | None = None,
+    repair_gaps: bool = True,
 ) -> str:
-    """Place or remove paths. action: place_line | place_tile | place_addition | remove_tile | remove_line."""
+    """Place or remove paths. action: place_line | place_tile | place_addition | remove_tile | remove_line.
+
+    place_line / place_tile also fill one-tile gaps beside the new tiles. Pass
+    repair_gaps=false for exact shapes (hollow squares, lettering) where those
+    gaps are intentional.
+    """
     with game_context() as game:
         ensure_paused(game)
         if action == "remove_tile":
@@ -449,7 +455,10 @@ def manage_paths(
             )
 
             result = game.paths.place_line(Tile(from_x, from_y), Tile(to_x, to_y))
-            gap_repair = repair_one_tile_gaps(game)
+            x1, x2 = sorted([from_x, to_x])
+            y1, y2 = sorted([from_y, to_y])
+            line = [(tx, ty) for tx in range(x1, x2 + 1) for ty in range(y1, y2 + 1)]
+            gap_repair = repair_one_tile_gaps(game, near=line) if repair_gaps else None
             return _json(
                 {
                     "placed": result.succeeded,
@@ -464,7 +473,7 @@ def manage_paths(
             from openrct2_mcp.path_connectivity import analyze_path_connectivity, repair_one_tile_gaps
 
             game.paths.place(Tile(tile_x, tile_y), queue=queue)
-            gap_repair = repair_one_tile_gaps(game)
+            gap_repair = repair_one_tile_gaps(game, near=[(tile_x, tile_y)]) if repair_gaps else None
             return _json(
                 {
                     "placed": True,

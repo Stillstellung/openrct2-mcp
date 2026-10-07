@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterable
 from typing import Any
 
 from pyrct2.client import RCT2
@@ -114,35 +115,30 @@ def find_one_tile_gaps(
     path_tiles: set[tuple[int, int]],
     *,
     bounds: tuple[int, int, int, int] | None = None,
+    near: Iterable[tuple[int, int]] | None = None,
 ) -> list[list[int]]:
-    """Non-path tiles that bridge two path neighbors on the same axis."""
-    gaps: list[list[int]] = []
-    seen: set[tuple[int, int]] = set()
+    """Non-path tiles that bridge two path neighbors on the same axis.
+
+    ``bounds`` (x1, y1, x2, y2) only considers gaps beside path tiles inside
+    that rectangle; ``near`` only considers gaps beside those path tiles.
+    """
+    sources = path_tiles if near is None else {t for t in near if t in path_tiles}
     if bounds is not None:
         x1, y1, x2, y2 = bounds
-        candidates: set[tuple[int, int]] = set()
-        for tx, ty in path_tiles:
-            if x1 <= tx <= x2 and y1 <= ty <= y2:
-                for dx, dy in CARDINAL_NEIGHBORS:
-                    gx, gy = tx + dx, ty + dy
-                    if (gx, gy) not in path_tiles:
-                        candidates.add((gx, gy))
-    else:
-        candidates = set()
-        for tx, ty in path_tiles:
-            for dx, dy in CARDINAL_NEIGHBORS:
-                gx, gy = tx + dx, ty + dy
-                if (gx, gy) not in path_tiles:
-                    candidates.add((gx, gy))
+        sources = {(tx, ty) for tx, ty in sources if x1 <= tx <= x2 and y1 <= ty <= y2}
+    candidates = {
+        (tx + dx, ty + dy)
+        for tx, ty in sources
+        for dx, dy in CARDINAL_NEIGHBORS
+        if (tx + dx, ty + dy) not in path_tiles
+    }
 
+    gaps: list[list[int]] = []
     for gx, gy in candidates:
-        if (gx, gy) in path_tiles or (gx, gy) in seen:
-            continue
         horizontal = (gx - 1, gy) in path_tiles and (gx + 1, gy) in path_tiles
         vertical = (gx, gy - 1) in path_tiles and (gx, gy + 1) in path_tiles
         if horizontal or vertical:
             gaps.append([gx, gy])
-            seen.add((gx, gy))
     return sorted(gaps)
 
 
@@ -169,10 +165,15 @@ def analyze_path_connectivity(game: RCT2) -> dict[str, Any]:
     }
 
 
-def repair_one_tile_gaps(game: RCT2, *, dry_run: bool = False) -> dict[str, Any]:
-    """Place footpath on detected one-tile gap coordinates."""
+def repair_one_tile_gaps(
+    game: RCT2,
+    *,
+    dry_run: bool = False,
+    near: Iterable[tuple[int, int]] | None = None,
+) -> dict[str, Any]:
+    """Place footpath on one-tile gaps (park-wide, or only beside ``near`` tiles)."""
     path_tiles = collect_path_tiles(game)
-    gaps = find_one_tile_gaps(path_tiles)
+    gaps = find_one_tile_gaps(path_tiles, near=near)
     placed: list[list[int]] = []
     failed: list[list[int]] = []
     for gx, gy in gaps:
@@ -259,7 +260,7 @@ def connect_path_route_with_validation(
             warnings.append(f"({tx},{ty}) not adjacent to entrance-connected path")
 
     if failed or skipped:
-        repair_one_tile_gaps(game, dry_run=False)
+        repair_one_tile_gaps(game, near=[(int(r[0]), int(r[1])) for r in route])
         path_tiles = collect_path_tiles(game)
         seeds = path_seeds_from_entrances(path_tiles, entrance_tiles)
         reachable = bfs_reachable(path_tiles, seeds)
