@@ -1896,10 +1896,25 @@ def find_open_land_tool(
     min_height: int = 10,
     near_x: int | None = None,
     near_y: int | None = None,
+    allow_scenery: bool = False,
 ) -> str:
-    """Find flat owned land rectangles without track."""
+    """Find level, owned land rectangles (x extent min_width, y extent min_height).
+
+    Sites contain no paths, track, entrances or scenery; allow_scenery=true
+    also accepts tree-covered land. Returns up to 15 non-overlapping sites,
+    nearest to (near_x, near_y) first.
+    """
     with game_context() as game:
-        return _json(find_open_land(game, min_width=min_width, min_height=min_height, near_x=near_x, near_y=near_y))
+        return _json(
+            find_open_land(
+                game,
+                min_width=min_width,
+                min_height=min_height,
+                near_x=near_x,
+                near_y=near_y,
+                allow_scenery=allow_scenery,
+            )
+        )
 
 
 @mcp.tool()

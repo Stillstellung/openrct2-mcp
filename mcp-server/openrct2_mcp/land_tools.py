@@ -98,6 +98,81 @@ def clear_area(
     return {"cleared": True, "removed_paths": removed_paths}
 
 
+_SCENERY_ELEMENTS = {"small_scenery", "large_scenery"}
+_TILE_FETCH_CHUNK = 32
+_MAX_OPEN_LAND_CANDIDATES = 15
+
+
+def _open_tile_heights(
+    game: RCT2,
+    bounds: dict[str, int],
+    *,
+    allow_scenery: bool,
+) -> dict[tuple[int, int], int]:
+    """baseZ of each owned, flat tile that holds nothing but its surface.
+
+    With ``allow_scenery`` trees and other scenery don't count as blockers
+    (building track or paths over small scenery removes it).
+    """
+    heights: dict[tuple[int, int], int] = {}
+    for x0 in range(bounds["min_x"], bounds["max_x"] + 1, _TILE_FETCH_CHUNK):
+        for y0 in range(bounds["min_y"], bounds["max_y"] + 1, _TILE_FETCH_CHUNK):
+            x1 = min(x0 + _TILE_FETCH_CHUNK - 1, bounds["max_x"])
+            y1 = min(y0 + _TILE_FETCH_CHUNK - 1, bounds["max_y"])
+            for t in game.world.get_tiles(Tile(x0, y0), Tile(x1, y1)):
+                surface = t.surface
+                if not surface.hasOwnership or surface.slope != 0:
+                    continue
+                blocked = any(
+                    e.type != "surface" and not (allow_scenery and e.type in _SCENERY_ELEMENTS)
+                    for e in t.elements
+                )
+                if not blocked:
+                    heights[(t.x, t.y)] = surface.baseZ
+    return heights
+
+
+def open_rect_origins(
+    heights: dict[tuple[int, int], int],
+    bounds: dict[str, int],
+    width: int,
+    height: int,
+) -> list[tuple[int, int, int]]:
+    """(x, y, baseZ) of every width x height rectangle of open tiles at one level."""
+    xs = range(bounds["min_x"], bounds["max_x"] + 1)
+    ys = range(bounds["min_y"], bounds["max_y"] + 1)
+    nx, ny = len(xs), len(ys)
+    if width < 1 or height < 1 or width > nx or height > ny:
+        return []
+    # Summed-area tables of open-tile count, z and z^2: a rectangle qualifies
+    # when every tile is open and its z values have zero variance.
+    count = [[0] * (ny + 1) for _ in range(nx + 1)]
+    sum_z = [[0] * (ny + 1) for _ in range(nx + 1)]
+    sum_z2 = [[0] * (ny + 1) for _ in range(nx + 1)]
+    for i, x in enumerate(xs):
+        for j, y in enumerate(ys):
+            z = heights.get((x, y))
+            c, v = (0, 0) if z is None else (1, z)
+            count[i + 1][j + 1] = c + count[i][j + 1] + count[i + 1][j] - count[i][j]
+            sum_z[i + 1][j + 1] = v + sum_z[i][j + 1] + sum_z[i + 1][j] - sum_z[i][j]
+            sum_z2[i + 1][j + 1] = v * v + sum_z2[i][j + 1] + sum_z2[i + 1][j] - sum_z2[i][j]
+
+    def rect(table: list[list[int]], i: int, j: int) -> int:
+        return table[i + width][j + height] - table[i][j + height] - table[i + width][j] + table[i][j]
+
+    n = width * height
+    origins: list[tuple[int, int, int]] = []
+    for i in range(nx - width + 1):
+        for j in range(ny - height + 1):
+            if rect(count, i, j) != n:
+                continue
+            total = rect(sum_z, i, j)
+            if rect(sum_z2, i, j) * n != total * total:
+                continue
+            origins.append((xs[i], ys[j], total // n))
+    return origins
+
+
 def find_open_land(
     game: RCT2,
     *,
@@ -105,40 +180,44 @@ def find_open_land(
     min_height: int = 10,
     near_x: int | None = None,
     near_y: int | None = None,
-    scan_step: int = 8,
+    allow_scenery: bool = False,
 ) -> dict[str, Any]:
-    """Find flat owned rectangles without track (stepped scan)."""
+    """Find level, owned rectangles with no paths, track, entrances or scenery.
+
+    Every origin is checked; up to 15 non-overlapping sites are returned,
+    nearest to (near_x, near_y) first when given. ``allow_scenery`` accepts
+    tiles with trees or other scenery on them.
+    """
     bounds = get_map_bounds(game)
+    heights = _open_tile_heights(game, bounds, allow_scenery=allow_scenery)
+    origins = open_rect_origins(heights, bounds, min_width, min_height)
+
+    def distance(ox: int, oy: int) -> int:
+        if near_x is None or near_y is None:
+            return 0
+        return abs(ox - near_x) + abs(oy - near_y)
+
+    origins.sort(key=lambda o: distance(o[0], o[1]))
     candidates: list[dict] = []
+    for ox, oy, base_z in origins:
+        overlaps = any(
+            abs(ox - c["origin"][0]) < min_width and abs(oy - c["origin"][1]) < min_height for c in candidates
+        )
+        if overlaps:
+            continue
+        candidates.append(
+            {
+                "origin": [ox, oy],
+                "size": [min_width, min_height],
+                "tile_z": base_z // 8,
+                "distance": distance(ox, oy),
+            }
+        )
+        if len(candidates) == _MAX_OPEN_LAND_CANDIDATES:
+            break
 
-    for ox in range(bounds["min_x"], bounds["max_x"] - min_width, scan_step):
-        for oy in range(bounds["min_y"], bounds["max_y"] - min_height, scan_step):
-            try:
-                if not game.world.is_area_flat(Tile(ox, oy), Tile(ox + min_width - 1, oy + min_height - 1)):
-                    continue
-                tiles = game.world.get_tiles(Tile(ox, oy), Tile(ox + min_width - 1, oy + min_height - 1))
-                if any(t.surface.ownership is None or t.surface.ownership == 0 for t in tiles):
-                    continue
-                if any(t.tracks for t in tiles):
-                    continue
-            except Exception:
-                continue
-
-            dist = 0
-            if near_x is not None and near_y is not None:
-                dist = abs(ox - near_x) + abs(oy - near_y)
-            candidates.append(
-                {
-                    "origin": [ox, oy],
-                    "size": [min_width, min_height],
-                    "tile_z": tiles[0].surface.baseZ // 8,
-                    "distance": dist,
-                }
-            )
-
-    candidates.sort(key=lambda c: c["distance"])
     return {
-        "candidates": candidates[:15],
+        "candidates": candidates,
         "best": candidates[0] if candidates else None,
-        "searched_step": scan_step,
+        "searched_step": 1,
     }

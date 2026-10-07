@@ -283,6 +283,7 @@ def find_sites_for_coaster_design(
         min_height=min_h,
         near_x=near_x,
         near_y=near_y,
+        allow_scenery=True,
     )
     for cand in (land.get("candidates") or [])[:max_candidates]:
         origin = cand["origin"]

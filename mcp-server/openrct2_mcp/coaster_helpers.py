@@ -1037,7 +1037,7 @@ def plan_compact_loop_site(
     sizes = sizes or [(12, 12), (10, 10), (8, 8)]
     sites: list[dict[str, Any]] = []
     for w, h in sizes:
-        land = find_open_land(game, min_width=w, min_height=h)
+        land = find_open_land(game, min_width=w, min_height=h, allow_scenery=True)
         best = land.get("best")
         if best:
             sites.append({"width": w, "height": h, "site": best})
