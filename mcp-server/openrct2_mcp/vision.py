@@ -1,17 +1,16 @@
-"""Capture OpenRCT2 window screenshots for AI vision workflows."""
+"""Capture OpenRCT2 window screenshots for AI vision workflows (macOS and Windows)."""
 
 from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
 
 from mcp.server.fastmcp.utilities.types import Image
 
-# Process names seen on macOS for OpenRCT2 builds.
-_PROCESS_NAMES = ("OpenRCT2", "openrct2")
 _DEFAULT_MAX_WIDTH = int(os.environ.get("OPENRCT2_VISION_MAX_WIDTH", "1280"))
 
 
@@ -19,8 +18,28 @@ class VisionCaptureError(RuntimeError):
     """Raised when the game window cannot be captured."""
 
 
+def _new_capture_path() -> Path:
+    fd, name = tempfile.mkstemp(prefix="openrct2-mcp-", suffix=".png")
+    os.close(fd)
+    return Path(name)
+
+
+def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run a macOS helper; stdin is detached so it never reads the MCP stdio pipe."""
+    try:
+        return subprocess.run(
+            args,
+            check=False,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        raise VisionCaptureError(f"{args[0]} could not run: {exc}") from exc
+
+
 def _find_window_id() -> int | None:
-    """Return the CGWindowID for the frontmost OpenRCT2 window, if any."""
+    """Return the CGWindowID for the frontmost OpenRCT2 window, if any (macOS)."""
     script = """
     tell application "System Events"
         repeat with procName in {"OpenRCT2", "openrct2"}
@@ -35,12 +54,7 @@ def _find_window_id() -> int | None:
     end tell
   return ""
     """
-    result = subprocess.run(
-        ["osascript", "-e", script],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    result = _run(["osascript", "-e", script])
     window_id = result.stdout.strip()
     if not window_id or not window_id.isdigit():
         return None
@@ -48,7 +62,7 @@ def _find_window_id() -> int | None:
 
 
 def _find_window_bounds() -> tuple[int, int, int, int] | None:
-    """Return (x, y, width, height) of the OpenRCT2 window via System Events."""
+    """Return (x, y, width, height) of the OpenRCT2 window via System Events (macOS)."""
     script = """
     tell application "System Events"
         repeat with procName in {"OpenRCT2", "openrct2"}
@@ -65,12 +79,7 @@ def _find_window_bounds() -> tuple[int, int, int, int] | None:
     end tell
     return ""
     """
-    result = subprocess.run(
-        ["osascript", "-e", script],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    result = _run(["osascript", "-e", script])
     parts = result.stdout.strip().split(",")
     if len(parts) != 4:
         return None
@@ -88,47 +97,23 @@ def _resize_image(path: Path, max_width: int) -> Path:
     if max_width <= 0:
         return path
     out = path.with_name(f"{path.stem}.resized{path.suffix}")
-    proc = subprocess.run(
-        ["sips", "-Z", str(max_width), str(path), "--out", str(out)],
-        capture_output=True,
-        text=True,
-    )
+    proc = _run(["sips", "-Z", str(max_width), str(path), "--out", str(out)])
     if proc.returncode != 0:
         return path
     return out
 
 
-def capture_game_window(
-    *,
-    max_width: int = _DEFAULT_MAX_WIDTH,
-    bring_to_front: bool = True,
-) -> tuple[Path, dict]:
-    """Capture the OpenRCT2 game window to a temporary PNG file.
-
-    Returns the image path and metadata dict.
-
-    Requires macOS Screen Recording permission for Cursor/Terminal.
-    """
+def _capture_macos(*, max_width: int, bring_to_front: bool) -> tuple[Path, dict]:
+    """Capture via screencapture. Requires Screen Recording permission for the terminal."""
     if bring_to_front:
-        subprocess.run(
-            [
-                "osascript",
-                "-e",
-                'tell application "OpenRCT2" to activate',
-            ],
-            capture_output=True,
-        )
+        _run(["osascript", "-e", 'tell application "OpenRCT2" to activate'])
         time.sleep(0.35)
 
     window_id = _find_window_id()
-    tmp = Path(tempfile.gettempdir()) / f"openrct2-mcp-{int(time.time())}.png"
+    tmp = _new_capture_path()
 
     if window_id is not None:
-        proc = subprocess.run(
-            ["screencapture", "-x", "-l", str(window_id), str(tmp)],
-            capture_output=True,
-            text=True,
-        )
+        proc = _run(["screencapture", "-x", "-l", str(window_id), str(tmp)])
         if proc.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
             resized = _resize_image(tmp, max_width)
             return resized, {
@@ -141,11 +126,7 @@ def capture_game_window(
     bounds = _find_window_bounds()
     if bounds is not None:
         x, y, w, h = bounds
-        proc = subprocess.run(
-            ["screencapture", "-x", "-R", f"{x},{y},{w},{h}", str(tmp)],
-            capture_output=True,
-            text=True,
-        )
+        proc = _run(["screencapture", "-x", "-R", f"{x},{y},{w},{h}", str(tmp)])
         if proc.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
             resized = _resize_image(tmp, max_width)
             return resized, {
@@ -157,15 +138,11 @@ def capture_game_window(
             }
 
     # Fallback: full display (less ideal but still useful).
-    proc = subprocess.run(
-        ["screencapture", "-x", str(tmp)],
-        capture_output=True,
-        text=True,
-    )
+    proc = _run(["screencapture", "-x", str(tmp)])
     if proc.returncode != 0 or not tmp.exists() or tmp.stat().st_size == 0:
         raise VisionCaptureError(
             "Could not capture OpenRCT2. Is the game running and visible? "
-            "On macOS, grant Screen Recording permission to Cursor or your terminal. "
+            "On macOS, grant Screen Recording permission to the terminal running your MCP client. "
             f"screencapture: {proc.stderr.strip()}"
         )
 
@@ -177,6 +154,31 @@ def capture_game_window(
         "bytes": resized.stat().st_size,
         "note": "OpenRCT2 window not found; captured entire screen instead.",
     }
+
+
+def capture_game_window(
+    *,
+    max_width: int = _DEFAULT_MAX_WIDTH,
+    bring_to_front: bool = True,
+) -> tuple[Path, dict]:
+    """Capture the OpenRCT2 game window to a temporary PNG file.
+
+    Returns the image path and metadata dict. Supported on Windows and macOS.
+    """
+    try:
+        if sys.platform == "win32":
+            from openrct2_mcp.vision_windows import capture_window_png
+
+            return capture_window_png(
+                _new_capture_path(), max_width=max_width, bring_to_front=bring_to_front
+            )
+        if sys.platform == "darwin":
+            return _capture_macos(max_width=max_width, bring_to_front=bring_to_front)
+    except VisionCaptureError:
+        raise
+    except OSError as exc:
+        raise VisionCaptureError(f"Screenshot failed: {exc}") from exc
+    raise VisionCaptureError(f"Screenshots are not supported on {sys.platform} (Windows and macOS only).")
 
 
 def capture_game_image(

@@ -44,7 +44,7 @@ def _rotate(x: int, y: int, direction: int) -> tuple[int, int]:
 @lru_cache(maxsize=1)
 def load_segments() -> dict[int, dict[str, Any]]:
     """Track segment metadata keyed by track_type (loaded once per process)."""
-    raw = json.loads(SEGMENTS_PATH.read_text())
+    raw = json.loads(SEGMENTS_PATH.read_text(encoding="utf-8"))
     return {int(s["type"]): s for s in raw}
 
 

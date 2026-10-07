@@ -617,7 +617,7 @@ def load_theme_preset(name: str) -> dict:
     path = THEMES_DIR / f"{name}.json"
     if not path.exists():
         raise FileNotFoundError(f"Theme preset not found: {path}")
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _resolve_footpath_addition(identifier: str | None, default: str) -> FootpathAdditions:

@@ -17,10 +17,41 @@ DEFAULT_RIDE_BUILDER_PORT = int(os.environ.get("OPENRCT2_RIDE_BUILDER_PORT", "20
 BRIDGE_TIMEOUT = float(os.environ.get("OPENRCT2_BRIDGE_TIMEOUT", "30"))
 RIDE_BUILDER_TIMEOUT = float(os.environ.get("OPENRCT2_RIDE_BUILDER_TIMEOUT", "15"))
 PORT_SCAN_RANGE = 20
+# Windows takes ~2 s to report a refused localhost connect, so a full port scan
+# with the game closed would take a minute. Localhost accepts are sub-millisecond.
+PROBE_TIMEOUT = 0.15
+SETUP_HINT = "See README 'Quick setup' to install the plugins for your OS."
 
 
 class ConnectionError(RuntimeError):
     """Raised when OpenRCT2 plugins are not reachable."""
+
+
+def _port_accepts(host: str, port: int, timeout: float = PROBE_TIMEOUT) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _socket_is_closed(sock: socket.socket | None) -> bool:
+    """True when the peer has closed or reset the connection (e.g. the game exited)."""
+    if sock is None:
+        return False
+    previous_timeout = sock.gettimeout()
+    try:
+        sock.settimeout(0)
+        return sock.recv(1, socket.MSG_PEEK) == b""
+    except BlockingIOError:
+        return False
+    except OSError:
+        return True
+    finally:
+        try:
+            sock.settimeout(previous_timeout)
+        except OSError:
+            pass
 
 
 class RideBuilderClient:
@@ -44,10 +75,11 @@ class RideBuilderClient:
             return
         last_error: Exception | None = None
         for candidate in range(self.port, self.port + PORT_SCAN_RANGE):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(self._timeout)
+                sock.settimeout(PROBE_TIMEOUT)
                 sock.connect((self.host, candidate))
+                sock.settimeout(self._timeout)
                 sock.sendall(json.dumps({"endpoint": "health"}).encode() + b"\n")
                 response = self._recv_line_on(sock)
                 parsed = json.loads(response)
@@ -57,13 +89,15 @@ class RideBuilderClient:
                     return
                 sock.close()
             except OSError as exc:
+                sock.close()
                 last_error = exc
             except (json.JSONDecodeError, ConnectionError):
+                sock.close()
                 continue
         raise ConnectionError(
             "Ride-builder plugin is not reachable. "
             f"Expected port {self.port}+ on {self.host}. "
-            "Launch OpenRCT2, load a park, and ensure ride-builder.js is installed."
+            f"Launch OpenRCT2, load a park, and ensure ride-builder.js is installed. {SETUP_HINT}"
         ) from last_error
 
     def _recv_line_on(self, sock: socket.socket) -> str:
@@ -94,8 +128,13 @@ class RideBuilderClient:
             message: dict[str, Any] = {"endpoint": endpoint}
             if params is not None:
                 message["params"] = params
-            self._socket.sendall(json.dumps(message).encode() + b"\n")
-            parsed = json.loads(self._recv_line())
+            try:
+                self._socket.sendall(json.dumps(message).encode() + b"\n")
+                parsed = json.loads(self._recv_line())
+            except (OSError, ConnectionError):
+                # Dead or desynced socket: drop it so the next call reconnects.
+                self.close()
+                raise
             return parsed
 
     def call(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
@@ -108,6 +147,10 @@ class RideBuilderClient:
         if self._socket is not None:
             self._socket.close()
             self._socket = None
+        self._buffer = b""
+
+    def is_closed(self) -> bool:
+        return _socket_is_closed(self._socket)
 
 
 class GameSession:
@@ -122,6 +165,9 @@ class GameSession:
     def _connect_bridge(self) -> RCT2:
         last_error: Exception | None = None
         for candidate in range(self._bridge_port, self._bridge_port + PORT_SCAN_RANGE):
+            if not _port_accepts(DEFAULT_HOST, candidate):
+                continue
+            connection: BridgeConnection | None = None
             try:
                 connection = BridgeConnection(
                     host=DEFAULT_HOST,
@@ -129,7 +175,10 @@ class GameSession:
                     timeout=BRIDGE_TIMEOUT,
                 )
                 health = connection.send("health")
-                if not health.get("success"):
+                payload = health.get("payload")
+                # ride-builder also answers "health" successfully; skip it.
+                is_ride_builder = isinstance(payload, dict) and payload.get("plugin") == "ride-builder"
+                if not health.get("success") or is_ride_builder:
                     connection.close()
                     continue
                 game = RCT2(connection)
@@ -138,21 +187,32 @@ class GameSession:
                 game.park.cheats.build_in_pause_mode()
                 return game
             except OSError as exc:
+                if connection is not None:
+                    connection.close()
                 last_error = exc
         raise ConnectionError(
             "openrct2-bridge plugin is not reachable. "
             f"Expected port {self._bridge_port}+ on {DEFAULT_HOST}. "
-            "Run scripts/install-bridge.sh, launch OpenRCT2, and load a park."
+            f"Launch OpenRCT2 and load a park. {SETUP_HINT}"
         ) from last_error
+
+    def _bridge_socket(self) -> socket.socket | None:
+        return getattr(getattr(self._game, "_connection", None), "_socket", None)
 
     @property
     def game(self) -> RCT2:
+        if self._game is not None and _socket_is_closed(self._bridge_socket()):
+            # The game exited or restarted since the last call; reconnect.
+            self.reset()
         if self._game is None:
             self._game = self._connect_bridge()
         return self._game
 
     @property
     def ride_builder(self) -> RideBuilderClient:
+        if self._ride_builder is not None and self._ride_builder.is_closed():
+            self._ride_builder.close()
+            self._ride_builder = None
         if self._ride_builder is None:
             self._ride_builder = RideBuilderClient()
             self._ride_builder.connect()
@@ -171,7 +231,10 @@ class GameSession:
 
     def reset(self) -> None:
         if self._game is not None:
-            self._game.close()
+            try:
+                self._game.close()
+            except OSError:
+                pass
             self._game = None
         if self._ride_builder is not None:
             self._ride_builder.close()
@@ -184,7 +247,13 @@ SESSION = GameSession()
 
 @contextmanager
 def game_context() -> Generator[RCT2, None, None]:
-    yield SESSION.game
+    try:
+        yield SESSION.game
+    except OSError:
+        # Socket failure mid-call (game closed, or a reply timed out and the
+        # stream is out of sync): start fresh on the next tool call.
+        SESSION.reset()
+        raise
 
 
 def ensure_paused(game: RCT2) -> None:

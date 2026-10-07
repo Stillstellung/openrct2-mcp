@@ -162,7 +162,9 @@ def capture_game_view(bring_to_front: bool = True) -> Any:
     """Capture a screenshot of the OpenRCT2 window for visual inspection.
 
     Returns the image plus capture metadata. Use before/after building to verify
-    placement, queues, and landscaping. Requires macOS Screen Recording permission.
+    placement, queues, and landscaping. Works on Windows and macOS (macOS needs
+    Screen Recording permission for the terminal running the MCP client). On
+    Windows the game never takes focus; bring_to_front briefly un-minimizes it.
     """
     try:
         image, meta = capture_game_image(bring_to_front=bring_to_front)
@@ -191,10 +193,9 @@ def inspect_area_at_tile(
             image, meta = capture_game_image()
             ctx["screenshot"] = meta
             return _json(ctx), image
-        except VisionCaptureError:
+        except VisionCaptureError as exc:
             ctx["screenshot_error"] = (
-                "Screenshot unavailable; use capture_game_view separately. "
-                "Grant Screen Recording permission to Cursor."
+                f"Screenshot unavailable ({exc}); use capture_game_view separately."
             )
             return _json(ctx)
 
@@ -236,7 +237,7 @@ def openrct2_status() -> str:
                     "ride_builder": rb_health,
                 }
             )
-    except ConnectionError as exc:
+    except (ConnectionError, OSError) as exc:
         return _json({"connected": False, "error": str(exc)})
 
 

@@ -174,7 +174,7 @@ def save_coaster_template(
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "design": spec,
     }
-    path.write_text(json.dumps(doc, indent=1) + "\n")
+    path.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
     return {
         "saved": True,
         "path": str(path),
@@ -192,7 +192,7 @@ def list_coaster_templates() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for path in sorted(LIBRARY_DIR.glob("*.json")):
         try:
-            doc = json.loads(path.read_text())
+            doc = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             continue
         stats = doc.get("stats") or {}
@@ -217,7 +217,7 @@ def load_coaster_template(slug_or_name: str) -> dict[str, Any]:
     if not path.exists():
         available = [p.stem for p in LIBRARY_DIR.glob("*.json")] if LIBRARY_DIR.exists() else []
         raise ValueError(f"template '{slug_or_name}' not found; available: {available}")
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def place_coaster_template(

@@ -139,7 +139,7 @@ class LintRuleTests(unittest.TestCase):
         fixture = FIXTURES / "design_mine_train.json"
         if not fixture.exists():
             self.skipTest("mine train fixture not exported")
-        design = json.loads(fixture.read_text())
+        design = json.loads(fixture.read_text(encoding="utf-8"))
         sim = simulate_design(design)
         # Real rides may contain diagonal pieces, which stop the v1 sim gracefully.
         self.assertGreater(len(sim["states"]), 10)

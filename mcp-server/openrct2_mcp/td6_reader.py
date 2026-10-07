@@ -15,18 +15,18 @@ import struct
 from pathlib import Path
 from typing import Any
 
+from openrct2_mcp.paths import openrct2_config_path
+
 ELEMENTS_OFFSET = 0xA3
 CHAIN_LIFT_FLAG = 0x80
 MAZE_RIDE_TYPE = 20
-
-OPENRCT2_CONFIG = Path.home() / "Library" / "Application Support" / "OpenRCT2" / "config.ini"
 
 
 def default_tracks_folder() -> Path | None:
     """RCT2 Tracks folder from the OpenRCT2 config's game_path."""
     try:
         cfg = configparser.ConfigParser()
-        cfg.read(OPENRCT2_CONFIG)
+        cfg.read(openrct2_config_path(), encoding="utf-8-sig")
         game_path = cfg.get("general", "game_path", fallback="").strip('"')
         if game_path:
             folder = Path(game_path) / "Tracks"
