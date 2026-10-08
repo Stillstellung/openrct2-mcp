@@ -155,8 +155,11 @@ def merge_ride_builder_maintenance(
         ("profit", "profit"),
         ("queue_time", "queueTime"),
     ):
-        if merged.get(summary_key) is None and ride_builder_row.get(rb_key) is not None:
-            merged[summary_key] = ride_builder_row.get(rb_key)
+        value = ride_builder_row.get(rb_key)
+        if summary_key in ("income_per_hour", "profit"):
+            value = _defined_money(value)
+        if merged.get(summary_key) is None and value is not None:
+            merged[summary_key] = value
     if ride_builder_row.get("activeBreakdown"):
         merged["active_breakdown"] = True
     # Older plugin builds report all 255 station slots; keep only stations with a queue.

@@ -252,7 +252,7 @@ Use low-level survey tools only when auto-build fails or user asks for step-by-s
 - Flower beds: small scenery `rct2.scenery_small.tg1`-`tg14` (full tile) and `tg15`-`tg21` (quarter clumps). All are named "Gardens", so pick by identifier; `list_scenery_objects_tool(search="garden")`
 - `landscape_tool` modes: `borders` (stripes along paths), `terraces` (one colour per height), `lawns` (tree grid + centrepiece). Always run `dry_run=true` first and pass `budget`; it skips queues and ride entrances
 - `build_maze_tool`: entrance/exit tiles must sit just outside the maze rectangle, beside a maze tile
-- Terraforming (`terraform_region_tool`, raw `landsetheight`) is expensive and not previewed: a small stepped hill cost $8,530. Check cash first
+- Terraforming is expensive (a small stepped hill cost $8,530) and cost grows faster than height. Run `terraform_region_tool(dry_run=true)` first; heights are tile_z
 
 ## Connection troubleshooting
 

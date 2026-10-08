@@ -13,6 +13,8 @@ from openrct2_mcp.bridge_fast import (
     get_guest_raw,
     get_ride_raw,
     list_rides_fast,
+    load_ride_builder_maintenance_index,
+    merge_ride_builder_maintenance,
     park_overview_fast,
     ride_summary_from_raw,
 )
@@ -713,7 +715,9 @@ def get_ride(ride_id: int) -> str:
         raw = get_ride_raw(game, ride_id)
         if raw is None:
             raise ValueError(f"Ride {ride_id} not found")
-        return _json(ride_summary_from_raw(raw))
+        summary = ride_summary_from_raw(raw)
+        rb_rows = load_ride_builder_maintenance_index(SESSION.ride_builder)
+        return _json(merge_ride_builder_maintenance(summary, rb_rows.get(ride_id)))
 
 
 @mcp.tool()
@@ -2255,11 +2259,21 @@ def terraform_region_tool(
     y2: int,
     target_height: int | None = None,
     flatten: bool = True,
+    dry_run: bool = False,
 ) -> str:
-    """Flatten or set terrain height in a rectangle."""
+    """Flatten or set terrain height in a rectangle.
+
+    target_height is tile_z (baseZ // 8, same as path and coaster tools); one land
+    step is 2. Terraforming is expensive (a small stepped hill cost $8,530), so run
+    dry_run=true first: it prices every tile with the game's own action query and
+    reports blocked tiles without changing anything. Results are in money units.
+    """
     with game_context() as game:
         ensure_paused(game)
-        return _json(terraform_region(game, x1, y1, x2, y2, target_height=target_height, flatten=flatten))
+        return _json(terraform_region(
+            game, x1, y1, x2, y2, target_height=target_height, flatten=flatten,
+            dry_run=dry_run, ride_builder=SESSION.ride_builder,
+        ))
 
 
 @mcp.tool()

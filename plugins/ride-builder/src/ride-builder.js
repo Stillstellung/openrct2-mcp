@@ -128,6 +128,7 @@ function main() {
         ["getRideMaintenance",   params => handleGetRideMaintenance(params)],
         ["getRideTrains",        params => handleGetRideTrains(params)],
         ["moveCamera",           params => handleMoveCamera(params)],
+        ["queryActions",         params => handleQueryActions(params)],
         ["listRideMaintenance",  () => handleListRideMaintenance()],
         ["getGameSpeed",         () => handleGetGameSpeed()],
         ["getElementsInRect",    params => handleGetElementsInRect(params)],
@@ -461,6 +462,24 @@ function main() {
         const surface = map.getTile(x, y).elements.find(e => e.type === "surface");
         vp.moveTo({ x: x * 32 + 16, y: y * 32 + 16, z: surface ? surface.baseZ : 0 });
         return { x, y, zoom: vp.zoom, rotation: vp.rotation };
+    }
+
+    // Price a batch of game actions without running them (context.queryAction):
+    // one entry per args object with cost (money units) and any error.
+    async function handleQueryActions(params) {
+        const { action, argsList } = params || {};
+        if (typeof action !== "string" || !Array.isArray(argsList)) throw new Error("Missing or invalid parameters: action, argsList");
+        if (typeof context.queryAction !== "function") throw new Error("queryAction not available");
+        const results = [];
+        for (const args of argsList) {
+            results.push(await new Promise(resolve => context.queryAction(action, args, r => resolve({
+                cost: r ? r.cost : null,
+                error: r ? r.error : -1,
+                errorTitle: r ? r.errorTitle : undefined,
+                errorMessage: r ? r.errorMessage : undefined,
+            }))));
+        }
+        return results;
     }
 
     // Trains only exist while a ride is open or testing; a closed ride reports 0.

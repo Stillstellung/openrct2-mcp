@@ -97,3 +97,22 @@ class FindOpenLandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_terraform_dry_run_prices_without_changing():
+    from types import SimpleNamespace
+
+    from openrct2_mcp.land_tools import terraform_region
+
+    class RB:
+        def call(self, name, params):
+            assert name == "queryActions" and params["action"] == "landsetheight"
+            return [{"cost": 170, "error": 0}] * (len(params["argsList"]) - 1) + [{"cost": 0, "error": 6}]
+
+    def fail(*a, **k):
+        raise AssertionError("dry run must not execute")
+
+    game = SimpleNamespace(execute=fail, _query=lambda *a: {"elements": [{"type": "surface", "baseZ": 96}]})
+    out = terraform_region(game, 0, 0, 1, 1, flatten=True, dry_run=True, ride_builder=RB())
+    assert out["target_height"] == 12 and out["estimated_cost"] == 510
+    assert out["blocked"] == 1 and out["blocked_sample"][0]["error"] == "not_owned"

@@ -49,3 +49,11 @@ def test_unrated_ride_sentinels_become_none():
     assert row["satisfaction"] is None and row["profit"] is None and row["income_per_hour"] is None
     row = ride_summary_from_raw({"id": 2, "satisfaction": 70, "profit": -496, "incomePerHour": 0})
     assert (row["satisfaction"], row["profit"], row["income_per_hour"]) == (70, -496, 0)
+
+
+def test_merge_drops_ride_builder_money_sentinel():
+    from openrct2_mcp.bridge_fast import merge_ride_builder_maintenance, ride_summary_from_raw
+
+    summary = ride_summary_from_raw({"id": 1, "profit": -(2**63)})
+    merged = merge_ride_builder_maintenance(summary, {"rideId": 1, "profit": -(2**63), "incomePerHour": 300})
+    assert merged["profit"] is None and merged["income_per_hour"] == 300

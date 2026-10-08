@@ -389,7 +389,22 @@ All of these were fixed after phase 2 (see the commit that follows this log):
 | No maze tool | fixed: `build_maze_tool` |
 | No bulk, rule-based landscaping | fixed: `landscape_tool` |
 | Unrated rides reported profit -9.2e18 and satisfaction 1275 | fixed: null until data exists |
-| Terraform cost unknown until paid ($8,530 surprise) | open: needs a cost preview / dry run |
+| Terraform cost unknown until paid ($8,530 surprise) | fixed: `terraform_region_tool(dry_run=true)` prices every tile via `queryAction` |
 | Ambiguous object names (21 "Gardens") | open: show identifiers alongside names everywhere |
 | Research list shows Space Rings as uninvented yet it was buildable | open |
 | Scanning large areas is slow (~25 ms/tile) | open: a bulk tile query in the plugin |
+| `get_ride` returned null reliability/guests/profit (no ride-builder merge) | fixed |
+| Money sentinel crept back into `list_rides` via the ride-builder merge | fixed |
+| `terraform_region` passed tile_z to a land-step API, so a flatten doubled the height | fixed: heights are tile_z throughout |
+| `landscape_tool` silently dropped objects past the budget | fixed: `skipped_budget` |
+
+### Using the new tools through the server
+
+- **Bramble Tangle:** Twist 2 (the duplicate Twist) replaced by a 3x3 hedge maze in one
+  `build_maze_tool` call, reusing the old entrance/exit tiles so the paths still connect.
+  35 passages, no errors; 5 riders and an excitement rating of 1.56 within a few days. It sits beside
+  Hedgehog Hollow, and the two read as one big garden maze.
+- `landscape_tool` borders found nothing left to plant (last round covered every path);
+  lawns added 7 trees and fountains for $205.
+- **Terraform pricing:** the dry run on a 4x4 lawn costs $272 to lift 2 tile_z, $900 to
+  lift 6. Cost grows faster than height, which explains the Lookout Hill bill.

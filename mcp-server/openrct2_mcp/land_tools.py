@@ -10,6 +10,13 @@ from pyrct2.world._tile import Tile
 
 from openrct2_mcp.map_region import get_map_bounds
 
+# OpenRCT2 GameActions::Status codes returned by queryAction.
+ACTION_STATUS = {
+    1: "invalid_parameters", 2: "disallowed", 3: "game_paused", 4: "insufficient_funds",
+    5: "not_in_editor_mode", 6: "not_owned", 7: "too_low", 8: "too_high", 9: "no_clearance",
+    10: "item_already_placed", 11: "not_closed", 12: "broken", 13: "no_free_elements", 14: "unknown",
+}
+
 
 def terraform_region(
     game: RCT2,
@@ -20,29 +27,65 @@ def terraform_region(
     *,
     target_height: int | None = None,
     flatten: bool = True,
+    dry_run: bool = False,
+    ride_builder=None,
 ) -> dict[str, Any]:
-    """Flatten or set height for a rectangular region."""
+    """Flatten a rectangle to target_height (tile_z = baseZ // 8) or raise it one step.
+
+    With flatten and no target_height, the first tile's height is used.
+    dry_run prices every tile with the game's own action query (needs the
+    ride-builder plugin) and changes nothing. Costs are in money units ($1 = 10).
+    """
     x_lo, x_hi = min(x1, x2), max(x1, x2)
     y_lo, y_hi = min(y1, y2), max(y1, y2)
-    changed = 0
+    tiles = [(tx, ty) for tx in range(x_lo, x_hi + 1) for ty in range(y_lo, y_hi + 1)]
     if flatten and target_height is None:
-        tiles = game.world.get_tiles(Tile(x_lo, y_lo), Tile(x_hi, y_hi))
-        target_height = tiles[0].surface.baseZ // 8 if tiles else 14
+        raw = game._query("get_tile", {"x": x_lo, "y": y_lo})
+        surface = next((e for e in raw.get("elements", []) if e.get("type") == "surface"), None)
+        target_height = int(surface["baseZ"]) // 8 if surface else 14
 
-    for tx in range(x_lo, x_hi + 1):
-        for ty in range(y_lo, y_hi + 1):
-            try:
-                if target_height is not None:
-                    game.world.set_height(Tile(tx, ty), target_height, slope=0)
-                else:
-                    game.world.raise_land(Tile(tx, ty), selection_type=MapSelectType.FULL)
-                changed += 1
-            except Exception:
-                pass
+    region = [x_lo, y_lo, x_hi, y_hi]
+    if dry_run:
+        if target_height is None:
+            raise ValueError("dry_run needs a target height (flatten=true or target_height)")
+        if ride_builder is None:
+            raise RuntimeError("dry_run needs the ride-builder plugin")
+        args = [{"x": tx * 32, "y": ty * 32, "height": target_height, "style": 0} for tx, ty in tiles]
+        quotes = ride_builder.call("queryActions", {"action": "landsetheight", "argsList": args})
+        blocked = [
+            {"tile": list(t), "error": q.get("errorMessage") or ACTION_STATUS.get(q.get("error"), q.get("error"))}
+            for t, q in zip(tiles, quotes) if q.get("error")
+        ]
+        cost = sum(int(q.get("cost") or 0) for q in quotes if not q.get("error"))
+        return {
+            "dry_run": True,
+            "region": region,
+            "target_height": target_height,
+            "tiles": len(tiles),
+            "estimated_cost": cost,
+            "estimated_cost_dollars": cost / 10,
+            "blocked": len(blocked),
+            "blocked_sample": blocked[:10],
+        }
+
+    start_cash = game.state.park_cash()
+    changed, failed = 0, []
+    for tx, ty in tiles:
+        try:
+            if target_height is not None:
+                game.execute("landsetheight", {"x": tx * 32, "y": ty * 32, "height": target_height, "style": 0})
+            else:
+                game.world.raise_land(Tile(tx, ty), selection_type=MapSelectType.FULL)
+            changed += 1
+        except Exception as exc:  # noqa: BLE001 - report and continue
+            failed.append({"tile": [tx, ty], "error": str(exc)[:100]})
     return {
         "terraformed_tiles": changed,
-        "region": [x_lo, y_lo, x_hi, y_hi],
+        "failed": len(failed),
+        "failed_sample": failed[:10],
+        "region": region,
         "target_height": target_height,
+        "spent": start_cash - game.state.park_cash(),
     }
 
 

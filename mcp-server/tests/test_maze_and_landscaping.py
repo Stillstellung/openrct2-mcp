@@ -67,3 +67,20 @@ def test_terraces_and_lawns():
     assert lawn[(4, 4)] == "fountain"
     trees = {t for t, o in lawn.items() if o == "tree"}
     assert trees and all(x % 3 == 0 and y % 3 == 0 and 0 < x < 8 and 0 < y < 8 for x, y in trees)
+
+
+def test_apply_plan_reports_budget_skips(monkeypatch):
+    from types import SimpleNamespace
+
+    import openrct2_mcp.scenery_tools as st
+    from openrct2_mcp.landscaping import apply_plan
+
+    cash = {"v": 1000}
+
+    def place(game, ident, x, y):
+        cash["v"] -= 120
+
+    monkeypatch.setattr(st, "place_small_scenery", place)
+    game = SimpleNamespace(state=SimpleNamespace(park_cash=lambda: cash["v"]))
+    out = apply_plan(game, {(i, 0): "tg1" for i in range(5)}, budget=200)
+    assert out["placed"] == 2 and out["skipped_budget"] == 3 and out["spent"] == 240

@@ -153,13 +153,19 @@ def lawn_plan(
 
 
 def apply_plan(game: RCT2, plan: dict[tuple[int, int], str], *, budget: int | None = None) -> dict[str, Any]:
-    """Place every planned object; stops when spent (game money units) passes budget."""
+    """Place every planned object; stops once spent (game money units) reaches budget.
+
+    The check runs before each object, so the last placement can overshoot the
+    budget by one object's price. Objects left out are counted in skipped_budget.
+    """
     from openrct2_mcp.scenery_tools import place_small_scenery
 
     start_cash = game.state.park_cash()
-    placed, failed = 0, []
-    for (x, y), ident in sorted(plan.items()):
+    placed, failed, skipped = 0, [], 0
+    items = sorted(plan.items())
+    for i, ((x, y), ident) in enumerate(items):
         if budget is not None and start_cash - game.state.park_cash() >= budget:
+            skipped = len(items) - i
             break
         try:
             place_small_scenery(game, ident, x, y)
@@ -170,5 +176,6 @@ def apply_plan(game: RCT2, plan: dict[tuple[int, int], str], *, budget: int | No
         "placed": placed,
         "failed": len(failed),
         "failed_sample": failed[:10],
+        "skipped_budget": skipped,
         "spent": start_cash - game.state.park_cash(),
     }
