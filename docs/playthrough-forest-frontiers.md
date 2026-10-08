@@ -337,3 +337,17 @@ All of these were fixed after phase 2 (see the commit that follows this log):
   mid-course lifts matter in built-up parks. The circuit enclosed its own station, so guest
   access came from the one open side (bought two tiles and ran a path to the main entrance).
 - Park at Y3 October: **rating 961**, 1,243 guests.
+- **Mid-course lifts unlock long rides.** Adding chain-lift modules to the wander pool (the
+  energy reference resets to the new crest) lets the track keep cruising over obstacles. On
+  open ground layouts reach ~150 pieces; in the park a whole-map sweep (2,460 tiles mapped,
+  ~10,000 station/lift candidates, 3 minutes) found 20 closable layouts. Built the best:
+  **"Serpent of the Pines"** (Looping RC, 98 pieces, 39x29 footprint over the park centre):
+  27-high lift, turning first drop, camelback, corkscrews, two mid-course lifts, a high pass
+  and a long snaking descent of alternating turns six above the paths. Excitement 5.75
+  (park best), intensity 8.78.
+- **Theming:** every coaster renamed and recoloured (track, accent, supports, cars), and all
+  21 rides with entrances switched to the Log Cabin station style (`ridesetappearance` type 7,
+  station object index 6). New `theme_ride_tool` does it in one call with colour names.
+  Names: Timber Rattler, Lil' Ladybug, Fern Flinger, Thunder Ridge, Mole Hole Express,
+  Canopy Glider, Valley Dipper, Sky Sweeper, Serpent of the Pines.
+- Park at Y4 March: 1,388 guests.

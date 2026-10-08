@@ -214,6 +214,85 @@ def set_ride_colour_scheme(game: RCT2, ride_id: int, appearance_type: int, colou
     return {"ride_id": ride_id, "appearance_type": appearance_type, "colour": colour}
 
 
+# OpenRCT2 colour palette indices by name.
+COLOURS = {
+    "black": 0, "grey": 1, "gray": 1, "white": 2, "dark_purple": 3, "light_purple": 4,
+    "bright_purple": 5, "dark_blue": 6, "light_blue": 7, "icy_blue": 8, "teal": 9,
+    "aquamarine": 10, "saturated_green": 11, "dark_green": 12, "moss_green": 13,
+    "bright_green": 14, "olive_green": 15, "dark_olive_green": 16, "bright_yellow": 17,
+    "yellow": 18, "dark_yellow": 19, "light_orange": 20, "dark_orange": 21,
+    "light_brown": 22, "saturated_brown": 23, "dark_brown": 24, "salmon_pink": 25,
+    "bordeaux_red": 26, "saturated_red": 27, "bright_red": 28, "dark_pink": 29,
+    "bright_pink": 30, "light_pink": 31,
+}
+# ridesetappearance types (verified live for 0-4 and 7).
+_APPEARANCE = {"track": 0, "accent": 1, "supports": 2, "car_body": 3, "car_trim": 4, "entrance_style": 7}
+
+
+def colour_index(value: int | str) -> int:
+    if isinstance(value, int):
+        return value
+    key = value.strip().lower().replace(" ", "_").replace("-", "_")
+    if key.isdigit():
+        return int(key)
+    if key not in COLOURS:
+        raise ValueError(f"Unknown colour {value!r}; use one of {sorted(COLOURS)} or 0-31")
+    return COLOURS[key]
+
+
+def station_style_index(game: RCT2, style: int | str) -> int:
+    """Station (entrance/exit) style index from a name like 'log cabin' or an identifier."""
+    if isinstance(style, int) or str(style).isdigit():
+        return int(style)
+    wanted = str(style).strip().lower()
+    for obj in game._query("get_objects", {"type": "station"}):
+        if wanted in (str(obj.get("name", "")).lower(), str(obj.get("identifier", "")).lower()):
+            return int(obj["index"])
+    names = [o.get("name") for o in game._query("get_objects", {"type": "station"})]
+    raise ValueError(f"Unknown station style {style!r}; loaded styles: {names}")
+
+
+def theme_ride(
+    game: RCT2,
+    ride_id: int,
+    *,
+    name: str | None = None,
+    track: int | str | None = None,
+    accent: int | str | None = None,
+    supports: int | str | None = None,
+    car_body: int | str | None = None,
+    car_trim: int | str | None = None,
+    entrance_style: int | str | None = None,
+) -> dict[str, Any]:
+    """Rename a ride and set its colours (all colour schemes and cars) and entrance style."""
+    applied: dict[str, Any] = {}
+    if name:
+        game.execute("ridesetname", {"ride": ride_id, "name": name})
+        applied["name"] = name
+    for key, value in (("track", track), ("accent", accent), ("supports", supports)):
+        if value is None:
+            continue
+        colour = colour_index(value)
+        for scheme in range(4):
+            game.execute("ridesetappearance", {"ride": ride_id, "type": _APPEARANCE[key], "value": colour, "index": scheme})
+        applied[key] = colour
+    for key, value in (("car_body", car_body), ("car_trim", car_trim)):
+        if value is None:
+            continue
+        colour = colour_index(value)
+        for car in range(32):
+            try:
+                game.execute("ridesetappearance", {"ride": ride_id, "type": _APPEARANCE[key], "value": colour, "index": car})
+            except Exception:
+                break  # past the last vehicle colour slot
+        applied[key] = colour
+    if entrance_style is not None:
+        style = station_style_index(game, entrance_style)
+        game.execute("ridesetappearance", {"ride": ride_id, "type": _APPEARANCE["entrance_style"], "value": style, "index": 0})
+        applied["entrance_style"] = style
+    return {"ride_id": ride_id, "applied": applied}
+
+
 def demolish_ride(game: RCT2, ride_id: int) -> dict:
     _ride_entity(game, ride_id).demolish()
     return {"demolished": True, "ride_id": ride_id}

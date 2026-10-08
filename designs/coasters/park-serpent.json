@@ -1,0 +1,371 @@
+{
+ "template_version": 1,
+ "name": "park-serpent",
+ "slug": "park-serpent",
+ "notes": "",
+ "prompt": "",
+ "mood": "",
+ "ratings": {
+  "excitement": 5.75,
+  "intensity": 8.78,
+  "nausea": 4.55
+ },
+ "validated": true,
+ "lint_ok": true,
+ "stats": {
+  "piece_count": 98,
+  "station_pieces": 5,
+  "footprint_bbox": [
+   29,
+   34,
+   67,
+   62
+  ],
+  "footprint_size": [
+   39,
+   29
+  ],
+  "max_z_above_station": 28,
+  "peak_piece_index": 52,
+  "endpoint": {
+   "x": 32,
+   "y": 58,
+   "z": 12,
+   "direction": 2
+  }
+ },
+ "created_at": "2026-10-08T12:21:08",
+ "design": {
+  "version": 1,
+  "ride_type": 15,
+  "pieces": [
+   {
+    "track_type": 2
+   },
+   {
+    "track_type": 3
+   },
+   {
+    "track_type": 3
+   },
+   {
+    "track_type": 3
+   },
+   {
+    "track_type": 6,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 9,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 12
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 37
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 15
+   },
+   {
+    "track_type": 6
+   },
+   {
+    "track_type": 4
+   },
+   {
+    "track_type": 9
+   },
+   {
+    "track_type": 12
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 15
+   },
+   {
+    "track_type": 59
+   },
+   {
+    "track_type": 60
+   },
+   {
+    "track_type": 6,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 9,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 6
+   },
+   {
+    "track_type": 46
+   },
+   {
+    "track_type": 9
+   },
+   {
+    "track_type": 6,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 9,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 12
+   },
+   {
+    "track_type": 48
+   },
+   {
+    "track_type": 15
+   },
+   {
+    "track_type": 12
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 15
+   },
+   {
+    "track_type": 12
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 15
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 12
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 15
+   },
+   {
+    "track_type": 12
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 15
+   },
+   {
+    "track_type": 16
+   },
+   {
+    "track_type": 43
+   },
+   {
+    "track_type": 42
+   },
+   {
+    "track_type": 6
+   },
+   {
+    "track_type": 9
+   },
+   {
+    "track_type": 12
+   },
+   {
+    "track_type": 15
+   },
+   {
+    "track_type": 43
+   },
+   {
+    "track_type": 42
+   },
+   {
+    "track_type": 16
+   },
+   {
+    "track_type": 17
+   },
+   {
+    "track_type": 43
+   },
+   {
+    "track_type": 42
+   },
+   {
+    "track_type": 42
+   },
+   {
+    "track_type": 17
+   },
+   {
+    "track_type": 43
+   },
+   {
+    "track_type": 42
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 17
+   },
+   {
+    "track_type": 16
+   },
+   {
+    "track_type": 12
+   },
+   {
+    "track_type": 48
+   },
+   {
+    "track_type": 15
+   },
+   {
+    "track_type": 42
+   },
+   {
+    "track_type": 1
+   }
+  ],
+  "origin": {
+   "x": 32,
+   "y": 58,
+   "z": 12,
+   "direction": 2
+  }
+ }
+}

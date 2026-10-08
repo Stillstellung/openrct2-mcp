@@ -106,6 +106,7 @@ from openrct2_mcp.ride_ops import (
     set_cars_per_train,
     set_num_trains,
     set_ride_colour_scheme,
+    theme_ride,
     set_ride_inspection_interval,
     set_ride_mode,
 )
@@ -1932,6 +1933,34 @@ def set_cars_per_train_tool(ride_id: int, count: int) -> str:
     with game_context() as game:
         ensure_paused(game)
         return _json(set_cars_per_train(game, ride_id, count, SESSION.ride_builder))
+
+
+@mcp.tool()
+def theme_ride_tool(
+    ride_id: int,
+    name: str | None = None,
+    track: str | None = None,
+    accent: str | None = None,
+    supports: str | None = None,
+    car_body: str | None = None,
+    car_trim: str | None = None,
+    entrance_style: str | None = None,
+) -> str:
+    """Rename a ride, recolour it and set its entrance/exit style in one call.
+
+    Colours by name (e.g. "bright_red", "dark_green", "icy_blue") or 0-31; track,
+    accent and supports apply to every colour scheme, car colours to every car.
+    entrance_style by station style name or identifier (e.g. "Log Cabin",
+    "rct2.station.log"); stalls have no entrance style.
+    """
+    with game_context() as game:
+        ensure_paused(game)
+        return _json(
+            theme_ride(
+                game, ride_id, name=name, track=track, accent=accent, supports=supports,
+                car_body=car_body, car_trim=car_trim, entrance_style=entrance_style,
+            )
+        )
 
 
 @mcp.tool()

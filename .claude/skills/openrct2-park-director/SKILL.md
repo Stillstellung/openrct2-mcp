@@ -186,6 +186,22 @@ Use low-level survey tools only when auto-build fails or user asks for step-by-s
 
 `coaster_build_compact_loop_tool(creative=true, recipe="out_and_back")` — classic out-and-back or other recipes in 8×8–12×12. Set `creative=false` for endpoint-driven rectangle loop.
 
+## Freeform coasters (preferred for anything bigger than a hairpin)
+
+- `coaster_generate_freeform_tool(x1, y1, x2, y2, station_x, station_y, station_direction, lift, budget)`
+  wanders modules (sloped turns, drops, hops, helixes, banked turns, mid-course lifts, loops
+  and corkscrews on looping types) inside the owned rectangle, flies over paths/rides only
+  above their top, and closes back into the station with A*. Place the result with
+  `coaster_fit_design_tool` (add `excavate=true` if it tunnels)
+- Station choice decides everything: the station tiles and the tile before it must be owned,
+  flat and clear, with room ahead for lift + drop. When one guess fails, sweep candidate
+  stations (each fails in milliseconds) instead of hand-tuning
+- Built-up parks need cruising height: larger `lift` plus mid-course lifts let the track pass
+  over existing rides; a ground-level first drop traps it among obstacles
+- Freeform circuits often enclose their own station; plan guest access (a bridge, tunnel, or
+  the one open side) before placing
+- Theme with `theme_ride_tool` (name, colours by name, entrance style e.g. "Log Cabin")
+
 ## Running a coaster after it is built
 
 - **Verify guests can ride**: within a few in-game days `get_ride` should show customers.
