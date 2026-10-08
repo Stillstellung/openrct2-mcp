@@ -157,12 +157,31 @@ def get_path_graph(
         x2, y2 = x + width - 1, y + height - 1
         paths = [p for p in paths if x <= p["tileX"] <= x2 and y <= p["tileY"] <= y2]
 
+    from openrct2_mcp.path_connectivity import (  # noqa: PLC0415
+        DIRECTION_DELTAS,
+        nodes_connect,
+        path_nodes_from_elements,
+    )
+
     path_tiles = {(p["tileX"], p["tileY"]) for p in paths}
-    neighbors = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    # Height aware: two tiles link only when some pair of their path elements joins.
+    path_nodes = path_nodes_from_elements(paths)
+    by_tile: dict[tuple[int, int], list] = {}
+    for node in path_nodes:
+        by_tile.setdefault((node[0], node[1]), []).append(node)
+    neighbors = [DIRECTION_DELTAS[d] for d in range(4)]
+
+    def joined(a: tuple[int, int], b: tuple[int, int]) -> bool:
+        direction = next(d for d, delta in DIRECTION_DELTAS.items() if delta == (b[0] - a[0], b[1] - a[1]))
+        return any(
+            nodes_connect(na, path_nodes[na], nb, path_nodes[nb], direction)
+            for na in by_tile.get(a, ())
+            for nb in by_tile.get(b, ())
+        )
 
     def degree(tile: tuple[int, int]) -> int:
         tx, ty = tile
-        return sum(1 for dx, dy in neighbors if (tx + dx, ty + dy) in path_tiles)
+        return sum(1 for dx, dy in neighbors if joined(tile, (tx + dx, ty + dy)))
 
     nodes = [{"x": tx, "y": ty, "degree": degree((tx, ty))} for tx, ty in sorted(path_tiles) if degree((tx, ty)) != 2]
     if not nodes:
@@ -173,7 +192,7 @@ def get_path_graph(
     for tx, ty in path_tiles:
         for dx, dy in neighbors:
             nxt = (tx + dx, ty + dy)
-            if nxt not in path_tiles:
+            if nxt not in path_tiles or not joined((tx, ty), nxt):
                 continue
             key = (min((tx, ty), nxt), max((tx, ty), nxt))
             if key in seen:

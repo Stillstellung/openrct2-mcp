@@ -156,19 +156,11 @@ def _nearest_safe_path_tile(
 
 def all_footpath_tiles(game: RCT2, *, entrance_connected_only: bool = True) -> list[list[int]]:
     """All footpath coordinates, optionally limited to the entrance-connected network."""
-    from openrct2_mcp.path_connectivity import (
-        bfs_reachable,
-        collect_path_tiles,
-        get_park_entrance_tiles,
-        path_seeds_from_entrances,
-    )
+    from openrct2_mcp.path_connectivity import collect_path_tiles, reachable_path_tiles
 
-    path_tiles = collect_path_tiles(game)
     if not entrance_connected_only:
-        return [[x, y] for x, y in sorted(path_tiles)]
-    entrance_tiles = get_park_entrance_tiles(game)
-    seeds = path_seeds_from_entrances(path_tiles, entrance_tiles)
-    reachable = bfs_reachable(path_tiles, seeds)
+        return [[x, y] for x, y in sorted(collect_path_tiles(game))]
+    reachable = reachable_path_tiles(game)
     return [[x, y] for x, y in sorted(reachable)]
 
 

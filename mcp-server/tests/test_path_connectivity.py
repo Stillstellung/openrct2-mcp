@@ -6,9 +6,11 @@ from unittest.mock import MagicMock
 from openrct2_mcp.path_connectivity import (
     _find_disconnected_components,
     analyze_path_connectivity,
+    bfs_nodes,
     bfs_reachable,
     find_one_tile_gaps,
     get_park_entrance_tiles,
+    path_nodes_from_elements,
     repair_one_tile_gaps,
     summarize_connectivity,
 )
@@ -154,6 +156,99 @@ class QueueBufferGapTests(unittest.TestCase):
     def test_find_one_tile_gaps_skips_queue_neighbors(self):
         tiles = {(5, 56), (5, 58), (8, 0), (10, 0)}
         self.assertEqual(find_one_tile_gaps(tiles, queue_tiles={(5, 58)}), [[9, 0]])
+
+
+def _fp(x, y, z, slope=None, edges=None, queue=False):
+    """Raw footpath element at tile_z z (baseZ = z * 8)."""
+    el = {"tileX": x, "tileY": y, "baseZ": z * 8, "slopeDirection": slope, "isQueue": queue}
+    if edges is not None:
+        el["edges"] = edges
+    return el
+
+
+class _RawGame:
+    """Fake game serving raw footpath/entrance element dicts."""
+
+    def __init__(self, paths, entrances):
+        self._paths = paths
+        self._entrances = entrances
+        self.world = self
+
+    def get_elements_by_type(self, kind):
+        return {"footpath": self._paths, "entrance": self._entrances}.get(kind, [])
+
+
+def _gate_at(z, y=19):
+    return [
+        {"tileX": x, "tileY": y, "object": 2, "baseZ": z * 8, "sequence": s}
+        for x, s in ((50, 1), (51, 0), (52, 2))
+    ]
+
+
+class HeightAwareConnectivityTests(unittest.TestCase):
+    def test_tunnel_below_ground_path_is_not_connected(self):
+        # Live failure: ground path at z12 beside a tunnel path at z6 counted as joined.
+        ground = [_fp(51, y, 12) for y in range(20, 46)]
+        tunnel = [_fp(51, y, 6) for y in range(46, 50)]
+        report = analyze_path_connectivity(_RawGame(ground + tunnel, _gate_at(12)))
+        self.assertEqual(report["reachable_count"], len(ground))
+        self.assertEqual(report["unreachable_count"], 4)
+        self.assertEqual(report["disconnected_component_count"], 1)
+        self.assertEqual(report["unreachable_tiles"][0], [51, 46])
+
+    def test_no_gap_between_ground_path_and_tunnel_below(self):
+        # Live failure: (48,46) was flagged between a ground path and the tunnel below.
+        nodes = path_nodes_from_elements([_fp(48, 45, 12), _fp(48, 47, 6)])
+        self.assertEqual(find_one_tile_gaps(nodes), [])
+        same_height = path_nodes_from_elements([_fp(48, 45, 12), _fp(48, 47, 12)])
+        self.assertEqual(find_one_tile_gaps(same_height), [[48, 46]])
+
+    def test_place_line_on_slope_with_unjoined_edges_is_unreachable(self):
+        # Live failure: place_line on sloped land made flat tiles at z12/14/16 with edges 0.
+        main = [_fp(51, y, 12, edges=0b1010) for y in range(20, 30)]
+        main[-1]["edges"] = 0b1000  # dead end at y=29: only the -y edge (bit 3) joins
+        stray = [_fp(52, 29, 12, edges=0), _fp(53, 29, 14, edges=0), _fp(54, 29, 16, edges=0)]
+        report = analyze_path_connectivity(_RawGame(main + stray, _gate_at(12)))
+        self.assertEqual(report["reachable_count"], 10)
+        self.assertEqual(report["unreachable_count"], 3)
+
+    def test_step_heights_without_edges_do_not_join(self):
+        nodes = path_nodes_from_elements([_fp(0, 0, 12), _fp(1, 0, 14), _fp(2, 0, 16)])
+        self.assertEqual(bfs_nodes(nodes, [(0, 0, 12)]), {(0, 0, 12)})
+
+    def test_ramp_joins_along_slope_but_not_from_the_side(self):
+        # Flat z12, two slopes rising toward +x (direction 2), flat landing at z16.
+        ramp = [_fp(10, 5, 12), _fp(11, 5, 12, slope=2), _fp(12, 5, 14, slope=2), _fp(13, 5, 16)]
+        side = [_fp(11, 6, 12), _fp(11, 4, 12)]
+        nodes = path_nodes_from_elements(ramp + side)
+        reachable = bfs_nodes(nodes, [(10, 5, 12)])
+        self.assertIn((13, 5, 16), reachable)
+        self.assertNotIn((11, 6, 12), reachable)
+        self.assertNotIn((11, 4, 12), reachable)
+
+    def test_edges_bit_must_be_set_on_both_tiles(self):
+        nodes = path_nodes_from_elements([_fp(0, 0, 12, edges=0b0100), _fp(1, 0, 12, edges=0)])
+        self.assertEqual(bfs_nodes(nodes, [(0, 0, 12)]), {(0, 0, 12)})
+        nodes = path_nodes_from_elements([_fp(0, 0, 12, edges=0b0100), _fp(1, 0, 12, edges=0b0001)])
+        self.assertEqual(len(bfs_nodes(nodes, [(0, 0, 12)])), 2)
+
+    def test_bridge_over_path_is_a_separate_node(self):
+        ground = [_fp(51, y, 12) for y in range(20, 30)]
+        bridge = [_fp(x, 25, 20) for x in range(49, 54)]  # crosses (51,25) above the ground path
+        report = analyze_path_connectivity(_RawGame(ground + bridge, _gate_at(12)))
+        self.assertEqual(report["path_tile_count"], 15)
+        self.assertEqual(report["reachable_count"], 10)
+        self.assertEqual(report["unreachable_count"], 5)
+        self.assertIn([51, 25, 20], report["unreachable_tiles"])
+        self.assertIn([50, 25], report["unreachable_tiles"])
+        self.assertEqual(report["one_tile_gap_count"], 0)
+
+    def test_gate_only_links_paths_at_its_height(self):
+        inside = [_fp(51, y, 12) for y in range(20, 25)]
+        outside_low = [_fp(51, y, 6) for y in range(14, 19)]
+        report = analyze_path_connectivity(_RawGame(inside + outside_low, _gate_at(12)))
+        self.assertEqual(report["reachable_count"], 5)
+        self.assertEqual(report["unreachable_count"], 5)
 
 
 if __name__ == "__main__":

@@ -95,6 +95,79 @@ def _surface_element(game: RCT2, x: int, y: int) -> dict[str, Any] | None:
     return next((e for e in raw.get("elements", []) if e.get("type") == "surface"), None)
 
 
+# SurfaceElement.ownership flag for owned land.
+_OWNERSHIP_OWNED = 1 << 5
+
+
+def _surface_owned(surface: dict[str, Any]) -> bool:
+    if "hasOwnership" in surface:
+        return bool(surface["hasOwnership"])
+    ownership = surface.get("ownership")
+    return isinstance(ownership, int) and bool(ownership & _OWNERSHIP_OWNED)
+
+
+def _land_needs_flatten(surface: dict[str, Any], station_z: int) -> bool:
+    """True when land at an entrance/guest tile would block a station at ``station_z``.
+
+    Land above the station, or sloped land reaching it (slope & 0x0F set, base
+    within one land step below), gives NoClearance. Flat land below an elevated
+    station is left alone.
+    """
+    base = int(surface.get("baseZ", 0)) // 8
+    sloped = bool(int(surface.get("slope", 0) or 0) & 0x0F)
+    return base > station_z or (sloped and base >= station_z - 2)
+
+
+def _side_land_state(
+    game: RCT2, tiles: list[tuple[int, int]], station_z: int
+) -> list[tuple[int, int, bool]]:
+    """(x, y, owned) for each of ``tiles`` whose land must be flattened to station_z."""
+    out = []
+    for x, y in tiles:
+        try:
+            surface = _surface_element(game, x, y)
+        except Exception:
+            surface = None
+        if surface and _land_needs_flatten(surface, station_z):
+            out.append((x, y, _surface_owned(surface)))
+    return out
+
+
+def _side_land_usable(game: RCT2, entrance: tuple[int, int], station_z: int) -> bool:
+    """True when the entrance tile is level with the station or can be flattened (owned)."""
+    return all(owned for _, _, owned in _side_land_state(game, [entrance], station_z))
+
+
+def _flatten_side_land(
+    game: RCT2,
+    entrance: tuple[int, int],
+    guest: tuple[int, int],
+    station_z: int,
+    flattened: list[list[int]],
+) -> bool:
+    """Flatten the entrance tile and the guest tile in front of it to ``station_z``.
+
+    Only owned tiles that would block the entrance are changed (landsetheight);
+    flattened tiles are appended to ``flattened`` as [x, y, z]. Returns False when
+    the entrance tile still blocks (unowned, or the land change failed).
+    """
+    for x, y, owned in _side_land_state(game, [entrance, guest], station_z):
+        is_entrance = (x, y) == entrance
+        if not owned:
+            if is_entrance:
+                return False
+            continue
+        try:
+            game.execute(
+                "landsetheight", {"x": x * 32, "y": y * 32, "height": station_z, "style": 0}
+            )
+            flattened.append([x, y, station_z])
+        except Exception:
+            if is_entrance:
+                return False
+    return True
+
+
 def game_ground_z(game: RCT2) -> Callable[[int, int], int | None]:
     """Cached surface tile_z lookup (surface baseZ // 8) for the enclosure checks."""
     cache: dict[tuple[int, int], int | None] = {}
@@ -303,6 +376,7 @@ def _remove_blocked_entrance_exit(
                     )["level"]
                     == ACCESS_OPEN
                     and not _guest_side_blocked(game, tx + dx, ty + dy, z)
+                    and _side_land_usable(game, (tx, ty), z // 8)
                     for tx, ty, dx, dy in _station_side_tiles(station_world)
                 )
             )
@@ -474,7 +548,20 @@ def ensure_entrance_exit(
     # pass only takes sides whose guest tile walks straight out of the track area;
     # the second accepts sides that need a path under the track; the last accepts
     # enclosed sides (with a warning) rather than leave the ride unable to open.
+    # Entrances need land level with the station: sloped or higher land on a side
+    # is flattened (owned tiles only) before placing there.
     placed_notes: list[str] = list(relocated)
+    flattened: list[list[int]] = []
+    land_cache: dict[tuple[int, int], int] = {}
+
+    def land_work(side: tuple[int, int, int, int]) -> int:
+        """Tiles to flatten before this side takes an entrance (level sides go first)."""
+        tx, ty, dx, dy = side
+        if (tx, ty) not in land_cache:
+            tiles = [(tx, ty), (tx + dx, ty + dy)]
+            land_cache[(tx, ty)] = len(_side_land_state(game, tiles, int(spec["origin"]["z"])))
+        return land_cache[(tx, ty)]
+
     station_world = _station_world_tiles(spec)
     station_tiles = {(x, y) for x, y, _ in station_world}
     track_tiles, low_tiles = _design_layout(spec, ground_z)
@@ -497,7 +584,7 @@ def ensure_entrance_exit(
         state = _ride_entrance_exit_state(game, ride_id)
         if state[missing]:
             continue
-        for tx, ty, dx, dy in _station_side_tiles(station_world):
+        for tx, ty, dx, dy in sorted(_station_side_tiles(station_world), key=land_work):
             if side_rank[(tx, ty)] > max_rank:
                 continue
             # The entrance faces the station: 0 = -x, 1 = +y, 2 = +x, 3 = -y.
@@ -505,6 +592,8 @@ def ensure_entrance_exit(
             direction = {(1, 0): 0, (-1, 0): 2, (0, 1): 3, (0, -1): 1}[(dx, dy)]
             station_z = int(spec["origin"]["z"]) * 8
             if _guest_side_blocked(game, tx + dx, ty + dy, station_z):
+                continue
+            if not _flatten_side_land(game, (tx, ty), (tx + dx, ty + dy), station_z // 8, flattened):
                 continue
             try:
                 game.actions.ride_entrance_exit_place(
@@ -522,6 +611,7 @@ def ensure_entrance_exit(
         **state,
         "method": "manual_fallback",
         "placed": placed_notes,
+        "flattened_tiles": flattened,
         "warnings": _enclosure_warnings(game, ride_id, spec, ground_z),
     }
 

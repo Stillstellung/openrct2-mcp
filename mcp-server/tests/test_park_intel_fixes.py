@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 from pyrct2._generated.enums import ResearchFundingLevel
 from pyrct2.park._research import ResearchCategory
@@ -301,5 +302,90 @@ class ThemePresetDecorTests(unittest.TestCase):
         self.assertEqual(scenery_tools._pick_decor(game, "FLWRSSM1"), ("none", []))
 
 
+def _guest(tile, happiness=150, thoughts=(), in_park=True):
+    data = {
+        "id": 1,
+        "x": tile[0] * 32 + 16,
+        "y": tile[1] * 32 + 16,
+        "happiness": happiness,
+        "nausea": 40,
+        "energy": 100,
+        "hunger": 120,
+        "thirst": 110,
+        "toilet": 30,
+        "isInPark": in_park,
+        "thoughts": [
+            {"type": t, "item": item, "freshness": 1, "freshTimeout": 0} for t, item in thoughts
+        ],
+    }
+    return SimpleNamespace(data=data)
+
+
+def _guest_game(guests):
+    return SimpleNamespace(park=SimpleNamespace(guests=SimpleNamespace(list=lambda: guests)))
+
+
+def _dirty_park():
+    guests = []
+    # 40 guests near (50, 50) think the path is disgusting; 10 near (10, 10) see vandalism.
+    guests += [_guest((50, 50), thoughts=[("path_disgusting", 0xFFFF), ("bad_litter", 0xFFFF)])] * 40
+    guests += [_guest((10, 11), happiness=40, thoughts=[("vandalism", 0xFFFF)])] * 10
+    guests += [_guest((30, 30), thoughts=[("bad_value", 7), ("bad_value", 7), ("toilet", 0xFFFF)])] * 10
+    guests += [_guest((30, 30), happiness=20)] * 40
+    guests += [_guest((0, 0), thoughts=[("crowded", 0xFFFF)], in_park=False)] * 5
+    return guests
+
+
+class GuestThoughtSummaryTests(unittest.TestCase):
+    def test_summary_counts_thoughts_rides_and_recommends(self):
+        game = _guest_game(_dirty_park())
+        summary = guest_intel.guest_thought_summary(game, _GuestRideBuilder([]), top=3)
+        self.assertEqual(summary["guest_count"], 100)
+        self.assertEqual(summary["sample_size"], 100)
+        self.assertEqual(summary["unhappy_count"], 50)
+        self.assertEqual(summary["averages"]["nausea"], 40)
+        self.assertEqual(
+            [t["type"] for t in summary["top_thoughts"]], ["bad_litter", "path_disgusting", "bad_value"]
+        )
+        self.assertEqual(summary["top_thoughts"][0]["count"], 40)
+        ride = summary["ride_thoughts"][0]
+        self.assertEqual((ride["ride_id"], ride["ride_name"]), (7, "Merry-Go-Round 1"))
+        self.assertEqual(ride["counts"], {"bad_value": 10})
+        recs = " ".join(summary["recommendations"])
+        for needle in ("handymen", "security", "Merry-Go-Round 1 is bad value", "restrooms"):
+            self.assertIn(needle, recs)
+        self.assertNotIn("crowded", recs)
+
+    def test_limit_caps_sample(self):
+        summary = guest_intel.guest_thought_summary(_guest_game(_dirty_park()), None, limit=40)
+        self.assertEqual(summary["guest_count"], 100)
+        self.assertEqual(summary["sample_size"], 40)
+        self.assertEqual(summary["ride_thoughts"], [])
+
+    def test_complaint_hotspots_use_guest_thoughts(self):
+        game = _guest_game(_dirty_park())
+        game.state = SimpleNamespace(park_messages=lambda: [])
+        with mock.patch.object(guest_intel, "_ride_tile_map", return_value={}), mock.patch.object(
+            guest_intel, "list_rides_fast", return_value=[]
+        ):
+            result = guest_intel.get_complaint_hotspots(game, _GuestRideBuilder([]))
+        self.assertEqual(result["hotspot_count"], 3)
+        worst = result["thought_cells"][0]
+        self.assertEqual(worst["cell"], [6, 6])
+        self.assertEqual(worst["center"], [50, 50])
+        self.assertEqual(worst["counts"], {"path_disgusting": 40, "bad_litter": 40})
+        self.assertEqual(result["hotspots"][0]["tile"], [50, 50])
+        self.assertEqual(result["by_category"]["vandalism"][0]["tile"], [10, 11])
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_hotspot_cells_skip_guests_off_map():
+    from openrct2_mcp.guest_intel import thought_hotspot_cells
+
+    on_ride = {"x": -32768 * 32, "y": 0, "thoughts": [{"type": "path_disgusting"}]}
+    on_path = {"x": 60 * 32, "y": 40 * 32, "thoughts": [{"type": "path_disgusting"}]}
+    cells = thought_hotspot_cells([on_ride, on_path], cell_size=8)
+    assert [c["cell"] for c in cells] == [[7, 5]]

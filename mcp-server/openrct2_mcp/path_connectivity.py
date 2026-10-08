@@ -1,10 +1,16 @@
-"""Footpath connectivity analysis and repair relative to park entrance."""
+"""Footpath connectivity analysis and repair relative to park entrance.
+
+Connectivity is height aware: every footpath element is its own node
+(tile_x, tile_y, tile_z), so a bridge over a path or a tunnel under one are
+separate nodes, and neighbouring paths only join when their facing edges are
+at the same height (and, when the game reports them, both edge bits are set).
+"""
 
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Iterable
-from typing import Any
+from collections.abc import Iterable, Mapping
+from typing import Any, NamedTuple
 
 from pyrct2._generated.objects import FootpathSurfaceInfo
 from pyrct2.client import RCT2
@@ -14,6 +20,25 @@ CARDINAL_NEIGHBORS = [(-1, 0), (1, 0), (0, -1), (0, 1)]
 
 # Tile lists in the full connectivity report are capped at this many entries.
 REPORT_TILE_SAMPLE = 20
+
+# Game directions: 0 = -x, 1 = +y, 2 = +x, 3 = -y (also the footpath ``edges`` bits).
+DIRECTION_DELTAS = {0: (-1, 0), 1: (0, 1), 2: (1, 0), 3: (0, -1)}
+# A sloped path climbs one land step (2 tile_z) toward its slope direction.
+SLOPE_RISE = 2
+# A gate links to a path whose facing edge is within this many tile_z of the gate base.
+GATE_Z_TOLERANCE = 1
+# Another path element closer than this (tile_z) means a gap tile is not empty at that height.
+PATH_CLEARANCE = 4
+
+Node = tuple[int, int, int]  # (tile_x, tile_y, tile_z): one footpath element
+
+
+class PathInfo(NamedTuple):
+    """One footpath element: slope direction (None = flat), edges bitmask (None = unknown), queue."""
+
+    slope: int | None = None
+    edges: int | None = None
+    queue: bool = False
 
 
 def collect_path_tiles(game: RCT2) -> set[tuple[int, int]]:
@@ -30,6 +55,125 @@ def collect_queue_tiles(game: RCT2) -> set[tuple[int, int]]:
     }
 
 
+def _optional_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def element_tile_z(el: Mapping[str, Any]) -> int | None:
+    """tile_z (baseZ // 8) of a raw element dict, or None when it carries no height."""
+    base_z = _optional_int(el.get("baseZ"))
+    if base_z is not None:
+        return base_z // 8
+    return _optional_int(el.get("baseHeight"))
+
+
+def path_nodes_from_elements(elements: Iterable[Mapping[str, Any]]) -> dict[Node, PathInfo]:
+    """Footpath elements keyed by (x, y, tile_z).
+
+    Elements without a height count as tile_z 0; without ``edges`` the edges are unknown.
+    """
+    nodes: dict[Node, PathInfo] = {}
+    for el in elements:
+        slope = _optional_int(el.get("slopeDirection"))
+        edges = _optional_int(el.get("edges"))
+        node = (int(el["tileX"]), int(el["tileY"]), element_tile_z(el) or 0)
+        nodes[node] = PathInfo(
+            slope=None if slope is None else slope % 4,
+            edges=None if edges is None else edges & 0x0F,
+            queue=bool(el.get("isQueue")),
+        )
+    return nodes
+
+
+def collect_path_nodes(game: RCT2) -> dict[Node, PathInfo]:
+    """Every footpath element in the park as a height-aware node."""
+    return path_nodes_from_elements(game.world.get_elements_by_type("footpath"))
+
+
+def _as_nodes(path_tiles: Iterable[tuple[int, ...]] | Mapping[Node, PathInfo]) -> dict[Node, PathInfo]:
+    """A node map as is, or plain (x, y) tiles as flat nodes at tile_z 0 with unknown edges."""
+    if isinstance(path_tiles, Mapping):
+        return dict(path_tiles)
+    return {(int(t[0]), int(t[1]), 0): PathInfo() for t in path_tiles}
+
+
+def _tile_index(nodes: Iterable[Node]) -> dict[tuple[int, int], list[Node]]:
+    index: dict[tuple[int, int], list[Node]] = {}
+    for node in nodes:
+        index.setdefault((node[0], node[1]), []).append(node)
+    return index
+
+
+def edge_height(node: Node, info: PathInfo, direction: int) -> int | None:
+    """tile_z of a path's edge facing ``direction``; None for the sides of a slope.
+
+    A flat path is at its base on every edge. A slope rising toward d is at
+    base + 2 on edge d and at base on the opposite edge; its sides never connect.
+    """
+    if info.slope is None:
+        return node[2]
+    if direction == info.slope:
+        return node[2] + SLOPE_RISE
+    if direction == (info.slope + 2) % 4:
+        return node[2]
+    return None
+
+
+def nodes_connect(a: Node, ia: PathInfo, b: Node, ib: PathInfo, direction: int) -> bool:
+    """True when path ``b``, one tile from ``a`` toward ``direction``, joins ``a``.
+
+    Facing edges must be at the same height; when the game's ``edges`` bitmasks
+    are known, both facing edge bits must be set too.
+    """
+    back = (direction + 2) % 4
+    ha = edge_height(a, ia, direction)
+    if ha is None or ha != edge_height(b, ib, back):
+        return False
+    if ia.edges is not None and not ia.edges & (1 << direction):
+        return False
+    if ib.edges is not None and not ib.edges & (1 << back):
+        return False
+    return True
+
+
+def bfs_nodes(nodes: Mapping[Node, PathInfo], starts: Iterable[Node]) -> set[Node]:
+    """Path nodes reachable from ``starts`` along joined edges."""
+    index = _tile_index(nodes)
+    reachable: set[Node] = set()
+    queue: deque[Node] = deque()
+    for start in starts:
+        if start in nodes and start not in reachable:
+            reachable.add(start)
+            queue.append(start)
+    while queue:
+        node = queue.popleft()
+        info = nodes[node]
+        for direction, (dx, dy) in DIRECTION_DELTAS.items():
+            for other in index.get((node[0] + dx, node[1] + dy), ()):
+                if other not in reachable and nodes_connect(node, info, other, nodes[other], direction):
+                    reachable.add(other)
+                    queue.append(other)
+    return reachable
+
+
+def node_components(nodes: Mapping[Node, PathInfo]) -> list[list[Node]]:
+    """Connected components of the height-aware path graph."""
+    seen: set[Node] = set()
+    components: list[list[Node]] = []
+    for start in sorted(nodes):
+        if start in seen:
+            continue
+        component = bfs_nodes(nodes, [start])
+        seen |= component
+        components.append(sorted(component))
+    return components
+
+
 # EntranceElement.object is the entrance type: 0 ride entrance, 1 ride exit,
 # 2 park entrance (pyrct2 park._find_entrances uses the same value).
 PARK_ENTRANCE_OBJECT = 2
@@ -43,24 +187,74 @@ def _is_park_entrance_element(ent: dict[str, Any]) -> bool:
         return False
 
 
-def get_park_entrance_tiles(game: RCT2) -> list[tuple[int, int]]:
-    """Park gate tiles (all tiles of each gate); never ride entrances or exits."""
-    entrances = game.world.get_elements_by_type("entrance")
-    park_tiles: list[tuple[int, int]] = []
-    for ent in entrances:
+def get_park_entrance_nodes(game: RCT2) -> list[tuple[int, int, int | None]]:
+    """Park gate tiles with their tile_z (None when the element has no height)."""
+    gates: list[tuple[int, int, int | None]] = []
+    for ent in game.world.get_elements_by_type("entrance"):
         if not _is_park_entrance_element(ent):
             continue
-        coord = (int(ent["tileX"]), int(ent["tileY"]))
-        if coord not in park_tiles:
-            park_tiles.append(coord)
+        gate = (int(ent["tileX"]), int(ent["tileY"]), element_tile_z(ent))
+        if gate not in gates:
+            gates.append(gate)
+    return gates
+
+
+def get_park_entrance_tiles(game: RCT2) -> list[tuple[int, int]]:
+    """Park gate tiles (all tiles of each gate); never ride entrances or exits."""
+    park_tiles: list[tuple[int, int]] = []
+    for x, y, _ in get_park_entrance_nodes(game):
+        if (x, y) not in park_tiles:
+            park_tiles.append((x, y))
     return park_tiles
+
+
+def entrance_seed_nodes(
+    nodes: Mapping[Node, PathInfo],
+    gates: Iterable[tuple[int, ...]],
+) -> list[Node]:
+    """Path nodes guests step onto from a gate: on the gate tile, or beside it at gate height.
+
+    ``gates`` holds (x, y) or (x, y, tile_z); a gate without a height links at any height.
+    """
+    index = _tile_index(nodes)
+    seeds: set[Node] = set()
+    for gate in gates:
+        gx, gy = int(gate[0]), int(gate[1])
+        gz = gate[2] if len(gate) > 2 else None
+        for node in index.get((gx, gy), ()):
+            if gz is None or abs(node[2] - gz) <= GATE_Z_TOLERANCE:
+                seeds.add(node)
+        for direction, (dx, dy) in DIRECTION_DELTAS.items():
+            for node in index.get((gx + dx, gy + dy), ()):
+                facing = edge_height(node, nodes[node], (direction + 2) % 4)
+                if gz is None or (facing is not None and abs(facing - gz) <= GATE_Z_TOLERANCE):
+                    seeds.add(node)
+    return sorted(seeds)
+
+
+def reachable_path_nodes(game: RCT2) -> tuple[dict[Node, PathInfo], set[Node]]:
+    """All path nodes, and the ones joined to a park gate."""
+    nodes = collect_path_nodes(game)
+    return nodes, bfs_nodes(nodes, entrance_seed_nodes(nodes, get_park_entrance_nodes(game)))
+
+
+def reachable_path_tiles(game: RCT2) -> set[tuple[int, int]]:
+    """(x, y) of every footpath element joined to a park gate (height aware)."""
+    _, reachable = reachable_path_nodes(game)
+    return {(x, y) for x, y, _ in reachable}
+
+
+def _node_out(node: Node, index: Mapping[tuple[int, int], list[Node]]) -> list[int]:
+    """[x, y], or [x, y, z] when the tile holds several path elements."""
+    x, y, z = node
+    return [x, y, z] if len(index.get((x, y), ())) > 1 else [x, y]
 
 
 def path_seeds_from_entrances(
     path_tiles: set[tuple[int, int]],
     entrance_tiles: list[tuple[int, int]],
 ) -> list[tuple[int, int]]:
-    """Path tiles that guests can step onto from entrance gates."""
+    """Path tiles that guests can step onto from entrance gates (height blind)."""
     seeds: set[tuple[int, int]] = set()
     for tx, ty in entrance_tiles:
         if (tx, ty) in path_tiles:
@@ -76,7 +270,7 @@ def bfs_reachable(
     path_tiles: set[tuple[int, int]],
     starts: list[tuple[int, int]],
 ) -> set[tuple[int, int]]:
-    """Tiles reachable from starts via cardinal adjacency within path_tiles."""
+    """Tiles reachable from starts via cardinal adjacency within path_tiles (height blind)."""
     reachable: set[tuple[int, int]] = set()
     queue: deque[tuple[int, int]] = deque()
     for start in starts:
@@ -96,7 +290,7 @@ def bfs_reachable(
 def disconnected_components(
     path_tiles: set[tuple[int, int]],
 ) -> list[list[tuple[int, int]]]:
-    """Connected components of the path graph (cardinal adjacency)."""
+    """Connected components of the path graph (cardinal adjacency, height blind)."""
     remaining = set(path_tiles)
     components: list[list[tuple[int, int]]] = []
     while remaining:
@@ -123,23 +317,23 @@ def _find_disconnected_components(
     return [[[x, y] for x, y in comp] for comp in disconnected_components(path_tiles)]
 
 
-def find_one_tile_gaps(
-    path_tiles: set[tuple[int, int]],
+def find_gap_heights(
+    path_tiles: Iterable[tuple[int, ...]] | Mapping[Node, PathInfo],
     *,
     bounds: tuple[int, int, int, int] | None = None,
     near: Iterable[tuple[int, int]] | None = None,
     blocked: Iterable[tuple[int, int]] | None = None,
     queue_tiles: Iterable[tuple[int, int]] | None = None,
-) -> list[list[int]]:
-    """Non-path tiles that bridge two path neighbors on the same axis.
-
-    ``bounds`` (x1, y1, x2, y2) only considers gaps beside path tiles inside
-    that rectangle; ``near`` only considers gaps beside those path tiles.
-    ``blocked`` tiles (park entrance gates) are never reported as gaps, and
-    neither are tiles touching any of ``queue_tiles`` (find_queue_adjacent_gaps).
-    """
-    blocked_set = set(blocked or ()) | queue_adjacent_tiles(queue_tiles or ())
-    sources = path_tiles if near is None else {t for t in near if t in path_tiles}
+) -> dict[tuple[int, int], int]:
+    """One-tile gaps mapped to the tile_z a flat path there would need (see find_one_tile_gaps)."""
+    nodes = _as_nodes(path_tiles)
+    index = _tile_index(nodes)
+    blocked_set = {(int(t[0]), int(t[1])) for t in blocked or ()}
+    blocked_set |= queue_adjacent_tiles(queue_tiles or ())
+    if near is None:
+        sources = set(index)
+    else:
+        sources = {(int(t[0]), int(t[1])) for t in near} & set(index)
     if bounds is not None:
         x1, y1, x2, y2 = bounds
         sources = {(tx, ty) for tx, ty in sources if x1 <= tx <= x2 and y1 <= ty <= y2}
@@ -147,16 +341,57 @@ def find_one_tile_gaps(
         (tx + dx, ty + dy)
         for tx, ty in sources
         for dx, dy in CARDINAL_NEIGHBORS
-        if (tx + dx, ty + dy) not in path_tiles and (tx + dx, ty + dy) not in blocked_set
+        if (tx + dx, ty + dy) not in blocked_set
     }
 
-    gaps: list[list[int]] = []
+    def facing_heights(gx: int, gy: int, direction: int) -> set[int]:
+        """Edge heights of paths one tile toward ``direction`` that face back at the gap."""
+        dx, dy = DIRECTION_DELTAS[direction]
+        back = (direction + 2) % 4
+        heights = set()
+        for node in index.get((gx + dx, gy + dy), ()):
+            h = edge_height(node, nodes[node], back)
+            if h is not None:
+                heights.add(h)
+        return heights
+
+    gaps: dict[tuple[int, int], int] = {}
     for gx, gy in candidates:
-        horizontal = (gx - 1, gy) in path_tiles and (gx + 1, gy) in path_tiles
-        vertical = (gx, gy - 1) in path_tiles and (gx, gy + 1) in path_tiles
-        if horizontal or vertical:
-            gaps.append([gx, gy])
-    return sorted(gaps)
+        occupied = [node[2] for node in index.get((gx, gy), ())]
+        for d1, d2 in ((0, 2), (1, 3)):
+            matches = sorted(
+                h
+                for h in facing_heights(gx, gy, d1) & facing_heights(gx, gy, d2)
+                if all(abs(z - h) >= PATH_CLEARANCE for z in occupied)
+            )
+            if matches:
+                gaps[(gx, gy)] = matches[0]
+                break
+    return gaps
+
+
+def find_one_tile_gaps(
+    path_tiles: Iterable[tuple[int, ...]] | Mapping[Node, PathInfo],
+    *,
+    bounds: tuple[int, int, int, int] | None = None,
+    near: Iterable[tuple[int, int]] | None = None,
+    blocked: Iterable[tuple[int, int]] | None = None,
+    queue_tiles: Iterable[tuple[int, int]] | None = None,
+) -> list[list[int]]:
+    """Tiles with no path at the needed height that bridge two paths on the same axis.
+
+    Height aware when ``path_tiles`` is a node map (collect_path_nodes): both
+    neighbours' facing edges must be at one height, so a ground path beside a
+    tunnel below is not a gap. Plain (x, y) tiles are treated as flat at one height.
+    ``bounds`` (x1, y1, x2, y2) only considers gaps beside path tiles inside
+    that rectangle; ``near`` only considers gaps beside those path tiles.
+    ``blocked`` tiles (park entrance gates) are never reported as gaps, and
+    neither are tiles touching any of ``queue_tiles`` (find_queue_adjacent_gaps).
+    """
+    gaps = find_gap_heights(
+        path_tiles, bounds=bounds, near=near, blocked=blocked, queue_tiles=queue_tiles
+    )
+    return sorted([gx, gy] for gx, gy in gaps)
 
 
 def queue_adjacent_tiles(queue_tiles: Iterable[tuple[int, int]]) -> set[tuple[int, int]]:
@@ -165,7 +400,7 @@ def queue_adjacent_tiles(queue_tiles: Iterable[tuple[int, int]]) -> set[tuple[in
 
 
 def find_queue_adjacent_gaps(
-    path_tiles: set[tuple[int, int]],
+    path_tiles: Iterable[tuple[int, ...]] | Mapping[Node, PathInfo],
     queue_tiles: Iterable[tuple[int, int]],
     *,
     blocked: Iterable[tuple[int, int]] | None = None,
@@ -178,36 +413,36 @@ def find_queue_adjacent_gaps(
 def analyze_path_connectivity(game: RCT2, *, sample: int = REPORT_TILE_SAMPLE) -> dict[str, Any]:
     """Summarize path reachability from park entrance and detect one-tile gaps.
 
-    ``disconnected_components`` lists only networks not connected to a park
-    entrance (empty for a healthy park). Each tile list holds at most
-    ``sample`` entries; the matching ``*_count`` keys give the totals.
+    Each footpath element is a node, so a tile with a bridge or tunnel counts
+    once per path element; tiles holding several elements are listed as
+    [x, y, z]. ``disconnected_components`` lists only networks not connected
+    to a park entrance (empty for a healthy park). Each tile list holds at
+    most ``sample`` entries; the matching ``*_count`` keys give the totals.
     """
-    path_tiles = collect_path_tiles(game)
-    queue_tiles = collect_queue_tiles(game)
+    nodes = collect_path_nodes(game)
+    index = _tile_index(nodes)
+    queue_tiles = {(x, y) for (x, y, _), info in nodes.items() if info.queue}
+    gates = get_park_entrance_nodes(game)
     entrance_tiles = get_park_entrance_tiles(game)
-    seeds = path_seeds_from_entrances(path_tiles, entrance_tiles)
-    reachable = bfs_reachable(path_tiles, seeds)
-    unreachable = sorted(path_tiles - reachable)
-    # Park gates act as connectors: paths outside and inside the gate are one network.
     entrance_set = set(entrance_tiles)
-    components = [
-        [[x, y] for x, y in comp if (x, y) not in entrance_set]
-        for comp in disconnected_components(path_tiles | entrance_set)
-        if not any(t in entrance_set or t in reachable for t in comp)
-    ]
-    components = sorted((comp for comp in components if comp), key=len, reverse=True)
-    gaps = find_one_tile_gaps(path_tiles, blocked=entrance_set, queue_tiles=queue_tiles)
-    queue_gaps = find_queue_adjacent_gaps(path_tiles, queue_tiles, blocked=entrance_set)
+    # Park gates act as connectors: paths outside and inside the gate are both seeds.
+    reachable = bfs_nodes(nodes, entrance_seed_nodes(nodes, gates))
+    unreachable = sorted(set(nodes) - reachable)
+    components = node_components({n: nodes[n] for n in unreachable})
+    components = sorted(components, key=len, reverse=True)
+    gaps = find_one_tile_gaps(nodes, blocked=entrance_set, queue_tiles=queue_tiles)
+    queue_gaps = find_queue_adjacent_gaps(nodes, queue_tiles, blocked=entrance_set)
 
     return {
         "entrance_tiles": [[x, y] for x, y in entrance_tiles],
-        "path_tile_count": len(path_tiles),
+        "path_tile_count": len(nodes),
         "queue_tile_count": len(queue_tiles),
         "reachable_count": len(reachable),
-        "unreachable_tiles": [[x, y] for x, y in unreachable[:sample]],
+        "unreachable_tiles": [_node_out(n, index) for n in unreachable[:sample]],
         "unreachable_count": len(unreachable),
         "disconnected_components": [
-            {"size": len(comp), "tiles": comp[:sample]} for comp in components[:sample]
+            {"size": len(comp), "tiles": [_node_out(n, index) for n in comp[:sample]]}
+            for comp in components[:sample]
         ],
         "disconnected_component_count": len(components),
         "one_tile_gaps": gaps[:sample],
@@ -255,13 +490,13 @@ def repair_one_tile_gaps(
 
     ``surface`` sets the fill surface (default: the scenario's default path).
     """
-    path_tiles = collect_path_tiles(game)
+    nodes = collect_path_nodes(game)
     # Gaps touching a queue stay open: a plain path there would merge into the queue.
     gaps = find_one_tile_gaps(
-        path_tiles,
+        nodes,
         near=near,
         blocked=get_park_entrance_tiles(game),
-        queue_tiles=collect_queue_tiles(game),
+        queue_tiles={(x, y) for (x, y, _), info in nodes.items() if info.queue},
     )
     placed: list[list[int]] = []
     failed: list[list[int]] = []
@@ -272,7 +507,6 @@ def repair_one_tile_gaps(
         try:
             game.paths.place(Tile(gx, gy), queue=False, surface=surface)
             placed.append([gx, gy])
-            path_tiles.add((gx, gy))
         except Exception:
             failed.append([gx, gy])
     return {
@@ -289,12 +523,11 @@ def assert_tile_adjacent_to_entrance_network(
     tile: tuple[int, int],
     path_tiles: set[tuple[int, int]] | None = None,
 ) -> bool:
-    """True if tile is on or cardinally adjacent to the entrance-connected path network."""
-    if path_tiles is None:
-        path_tiles = collect_path_tiles(game)
-    entrance_tiles = get_park_entrance_tiles(game)
-    seeds = path_seeds_from_entrances(path_tiles, entrance_tiles)
-    reachable = bfs_reachable(path_tiles, seeds)
+    """True if tile is on or cardinally adjacent to the entrance-connected path network.
+
+    ``path_tiles`` is ignored (kept for callers); reachability is height aware.
+    """
+    reachable = reachable_path_tiles(game)
     tx, ty = tile
     if (tx, ty) in reachable:
         return True
@@ -311,8 +544,7 @@ def connect_path_route_with_validation(
     """Place route tiles only when they extend the entrance-connected network."""
     path_tiles = collect_path_tiles(game)
     entrance_tiles = get_park_entrance_tiles(game)
-    seeds = path_seeds_from_entrances(path_tiles, entrance_tiles)
-    reachable = bfs_reachable(path_tiles, seeds)
+    reachable = reachable_path_tiles(game)
 
     placed: list[list[int]] = []
     failed: list[list[int]] = []
@@ -355,8 +587,7 @@ def connect_path_route_with_validation(
     if failed or skipped:
         repair_one_tile_gaps(game, near=[(int(r[0]), int(r[1])) for r in route])
         path_tiles = collect_path_tiles(game)
-        seeds = path_seeds_from_entrances(path_tiles, entrance_tiles)
-        reachable = bfs_reachable(path_tiles, seeds)
+        reachable = reachable_path_tiles(game)
         for raw in route:
             tx, ty = int(raw[0]), int(raw[1])
             if [tx, ty] in placed or [tx, ty] in failed:
@@ -369,6 +600,16 @@ def connect_path_route_with_validation(
         warnings.append(
             f"{post['unreachable_count']} path tiles remain unreachable from entrance"
         )
+    # Placement only checked tile adjacency; a new ground path beside a tunnel or
+    # on a slope may not actually join the network.
+    if placed:
+        joined = reachable_path_tiles(game)
+        not_joined = [t for t in placed if (t[0], t[1]) not in joined]
+        if not_joined:
+            warnings.append(
+                f"{len(not_joined)} placed tiles do not join the entrance network "
+                f"(height or slope mismatch): {not_joined[:10]}"
+            )
 
     return {
         "placed": placed,
@@ -412,22 +653,21 @@ def would_remove_disconnect(
     tile_x: int,
     tile_y: int,
 ) -> dict[str, Any]:
-    """Check whether removing a path tile would strand unreachable paths."""
-    path_tiles = collect_path_tiles(game)
-    coord = (tile_x, tile_y)
-    if coord not in path_tiles:
+    """Check whether removing the paths on a tile would strand unreachable paths."""
+    nodes = collect_path_nodes(game)
+    if not any((x, y) == (tile_x, tile_y) for x, y, _ in nodes):
         return {"would_disconnect": False, "reason": "not_a_path_tile"}
 
     before = analyze_path_connectivity(game)
-    remaining = path_tiles - {coord}
-    entrance_tiles = get_park_entrance_tiles(game)
-    seeds = path_seeds_from_entrances(remaining, entrance_tiles)
-    reachable_after = bfs_reachable(remaining, seeds)
-    stranded = sorted(remaining - reachable_after)
+    remaining = {n: info for n, info in nodes.items() if (n[0], n[1]) != (tile_x, tile_y)}
+    seeds = entrance_seed_nodes(remaining, get_park_entrance_nodes(game))
+    reachable_after = bfs_nodes(remaining, seeds)
+    index = _tile_index(nodes)
+    stranded = sorted(set(remaining) - reachable_after)
 
     return {
         "would_disconnect": len(stranded) > 0,
         "stranded_count": len(stranded),
-        "stranded_sample": [[x, y] for x, y in stranded[:20]],
+        "stranded_sample": [_node_out(n, index) for n in stranded[:20]],
         "before_unreachable_count": before["unreachable_count"],
     }

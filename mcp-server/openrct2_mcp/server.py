@@ -88,6 +88,7 @@ from openrct2_mcp.finance_tools import (
 from openrct2_mcp.guest_intel import (
     get_complaint_hotspots,
     guest_flow_summary,
+    guest_thought_summary,
     sample_guests_near_tile,
 )
 from openrct2_mcp.land_tools import buy_land, clear_area, find_open_land, sell_land, terraform_region
@@ -2199,10 +2200,32 @@ def fund_research_tool(level: str = "NORMAL", categories_json: str = "") -> str:
 
 
 @mcp.tool()
-def get_complaint_hotspots_tool() -> str:
-    """Map guest complaints to ride locations and categories."""
+def get_complaint_hotspots_tool(cell_size: int = 8, max_cells: int = 10) -> str:
+    """Map guest complaints to locations: park messages plus guest thoughts.
+
+    Guests thinking path_disgusting, bad_litter or vandalism are grouped by
+    their current tile into cell_size x cell_size cells; the worst max_cells
+    cells are returned (thought_cells) and listed first in hotspots.
+    """
     with game_context() as game:
-        return _json(get_complaint_hotspots(game, SESSION.ride_builder))
+        return _json(
+            get_complaint_hotspots(
+                game, SESSION.ride_builder, cell_size=cell_size, max_cells=max_cells
+            )
+        )
+
+
+@mcp.tool()
+def guest_thought_summary_tool(top: int = 10, limit: int | None = None) -> str:
+    """Aggregate all guests' needs and thoughts in one scan (~1s per 800 guests).
+
+    Returns guest count, average happiness/nausea/energy/hunger/thirst/toilet,
+    unhappy guests (happiness < 64), the top thought types, per-ride counts for
+    ride thoughts (bad_value, queuing_ages, sickening, ...) and recommendations.
+    limit caps how many guests are scanned (sample_size).
+    """
+    with game_context() as game:
+        return _json(guest_thought_summary(game, SESSION.ride_builder, top=top, limit=limit))
 
 
 @mcp.tool()
@@ -2559,12 +2582,15 @@ def place_ride_at_best_tile_tool(
     near_y: int | None = None,
     is_stall: bool = True,
     connect_paths: bool = True,
+    max_distance: int | None = 12,
 ) -> str:
     """Place stall or flat ride on surveyed open land.
 
     ride_object: identifier (rct2.ride.mgr1), catalog path, or display name.
     Flat rides get entrance/exit beside the real footprint, on the side facing
     the nearest entrance-connected path; connect_paths lays footpath to them.
+    With near_x/near_y, refuses sites farther than max_distance tiles
+    (Manhattan) from that point; pass null to allow any distance.
     """
     with game_context() as game:
         ensure_paused(game)
@@ -2577,6 +2603,7 @@ def place_ride_at_best_tile_tool(
                 near_y=near_y,
                 is_stall=is_stall,
                 connect_paths=connect_paths,
+                max_distance=max_distance,
             )
         )
 

@@ -172,5 +172,73 @@ class GuestAccessPolicyTests(unittest.TestCase):
         self.assertIn("routed under the track at", warnings[0])
 
 
+class _SlopedSideGame(_TileGame):
+    """North side (y=65..66) on a sloped hill foot; landsetheight flattens owned tiles."""
+
+    def __init__(self, owned=True):
+        super().__init__(
+            {
+                (x, y): [{"type": "surface", "baseZ": 96, "slope": 2, "hasOwnership": owned}]
+                for x in range(29, 36)
+                for y in (65, 66)
+            }
+        )
+        self.land_calls = []
+
+    def execute(self, action, params):
+        assert action == "landsetheight"
+        self.land_calls.append(params)
+        surface = self.tiles[(params["x"] // 32, params["y"] // 32)][0]
+        surface.update(baseZ=params["height"] * 8, slope=0)
+
+
+class SlopedEntranceSideTests(unittest.TestCase):
+    """Live failure: the open outer side was on sloped land, so the entrance went inside."""
+
+    def _run(self, game):
+        track, low, station_world = _out_and_back()
+        station = {}
+
+        def place(**kw):
+            surface = game.tiles.get((kw["x"] // 32, kw["y"] // 32), [{}])[0]
+            if surface.get("slope"):
+                raise RuntimeError("NoClearance: raise or lower land first")
+            if any((p["x"], p["y"]) == (kw["x"], kw["y"]) for p in station.values()):
+                raise RuntimeError("tile occupied")
+            key = "exit" if kw["is_exit"] else "entrance"
+            station[key] = {"x": kw["x"], "y": kw["y"], "z": 96, "direction": kw["direction"]}
+
+        game.actions.ride_entrance_exit_place.side_effect = place
+        with mock.patch.object(design_library, "_ride_station_raw", return_value=station), mock.patch.object(
+            design_library, "_station_world_tiles", return_value=station_world
+        ), mock.patch.object(design_library, "_design_layout", return_value=(track, low)):
+            return design_library.ensure_entrance_exit(game, mock.Mock(), 8, {"origin": {"z": 12}})
+
+    def test_sloped_open_side_is_flattened_to_station_height(self):
+        game = _SlopedSideGame(owned=True)
+        result = self._run(game)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["placed"], ["entrance at (30,66)", "exit at (31,66)"])
+        self.assertIn([30, 66, 12], result["flattened_tiles"])
+        self.assertIn([30, 65, 12], result["flattened_tiles"])
+        self.assertTrue(all(c["height"] == 12 for c in game.land_calls))
+        self.assertEqual(result["warnings"], [])
+
+    def test_unowned_sloped_side_is_not_flattened(self):
+        game = _SlopedSideGame(owned=False)
+        result = self._run(game)
+        self.assertEqual(game.land_calls, [])
+        self.assertEqual(result["flattened_tiles"], [])
+        # Falls back to the south lane, reachable only under the track.
+        self.assertTrue(all(note.endswith(",68)") for note in result["placed"]))
+
+    def test_land_check_ignores_flat_ground_below_an_elevated_station(self):
+        flat_low = {"type": "surface", "baseZ": 96, "slope": 0}
+        self.assertFalse(design_library._land_needs_flatten(flat_low, 20))
+        self.assertTrue(design_library._land_needs_flatten({**flat_low, "slope": 1}, 12))
+        self.assertTrue(design_library._land_needs_flatten({**flat_low, "baseZ": 112}, 12))
+        self.assertFalse(design_library._land_needs_flatten(flat_low, 12))
+
+
 if __name__ == "__main__":
     unittest.main()

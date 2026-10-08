@@ -157,7 +157,7 @@ class FindStallSitesTests(unittest.TestCase):
         game.world.get_tile.return_value = MagicMock(surface=MagicMock(slope=0))
         return game
 
-    @patch("openrct2_mcp.path_connectivity.get_park_entrance_tiles", return_value=[(60, 20)])
+    @patch("openrct2_mcp.path_connectivity.get_park_entrance_nodes", return_value=[(60, 20)])
     @patch("openrct2_mcp.placement_tools.validate_stall_site", return_value=112)
     @patch("openrct2_mcp.placement_tools.walkable_guest_path_z", return_value=112)
     @patch("openrct2_mcp.placement_tools.is_guest_footpath_tile", return_value=True)
@@ -169,7 +169,7 @@ class FindStallSitesTests(unittest.TestCase):
         self.assertIn("path", sites[0])
         self.assertEqual(sites[0]["path_base_z"], 112)
 
-    @patch("openrct2_mcp.path_connectivity.get_park_entrance_tiles", return_value=[(51, 30)])
+    @patch("openrct2_mcp.path_connectivity.get_park_entrance_nodes", return_value=[(51, 30)])
     @patch("openrct2_mcp.placement_tools.validate_stall_site", return_value=112)
     @patch("openrct2_mcp.placement_tools.walkable_guest_path_z", return_value=112)
     @patch("openrct2_mcp.placement_tools.is_guest_footpath_tile", return_value=True)
@@ -183,7 +183,7 @@ class FindStallSitesTests(unittest.TestCase):
             self.assertIn(site["stall"][0], (50, 52))
         self.assertEqual(sites[0]["stall"], [52, 45])
 
-    @patch("openrct2_mcp.path_connectivity.get_park_entrance_tiles", return_value=[(51, 30)])
+    @patch("openrct2_mcp.path_connectivity.get_park_entrance_nodes", return_value=[(51, 30)])
     @patch("openrct2_mcp.placement_tools.is_guest_footpath_tile", return_value=True)
     @patch("openrct2_mcp.placement_tools.walkable_guest_path_z", return_value=112)
     def test_skips_invalid_pads(self, *_mocks):
@@ -306,6 +306,55 @@ class PlaceFlatRideBestTileTests(unittest.TestCase):
         self.assertEqual(result["tile"], [72, 50])
         for key in ("entrance_front", "exit_front"):
             self.assertNotIn(tuple(result[key]), ferris)
+
+
+class PlaceRideNearPointTests(unittest.TestCase):
+    """Live failure: with no site near (near_x, near_y) the ride went across the park."""
+
+    FAR_LAND = {
+        "best": {"origin": [10, 10], "size": [5, 5]},
+        "candidates": [{"origin": [10, 10], "size": [5, 5]}, {"origin": [12, 40], "size": [5, 5]}],
+    }
+
+    def _game(self):
+        game = MagicMock()
+        game.rides.get_footprint.return_value = [
+            MagicMock(x=x, y=y) for x in range(-1, 2) for y in range(-1, 2)
+        ]
+        return game
+
+    def test_flat_ride_refuses_far_site(self):
+        from openrct2_mcp import placement_tools
+
+        game = self._game()
+        with patch.object(placement_tools, "find_open_land", return_value=self.FAR_LAND):
+            with self.assertRaisesRegex(ValueError, r"within 12 tiles of \(70, 50\).*nearest candidate is 64 tiles"):
+                placement_tools.place_ride_at_best_tile(
+                    game, MagicMock(), near_x=70, near_y=50, is_stall=False, connect_paths=False
+                )
+        game.rides.place_flat_ride.assert_not_called()
+
+    def test_stall_refuses_far_site_unless_unlimited(self):
+        from openrct2_mcp import placement_tools
+
+        game = self._game()
+        game.rides.place_stall.return_value = MagicMock()
+        with patch.object(placement_tools, "find_open_land", return_value=self.FAR_LAND):
+            with self.assertRaisesRegex(ValueError, "larger max_distance"):
+                placement_tools.place_ride_at_best_tile(game, MagicMock(), near_x=70, near_y=50)
+            result = placement_tools.place_ride_at_best_tile(
+                game, MagicMock(), near_x=70, near_y=50, max_distance=None
+            )
+        self.assertEqual(result["tile"], [12, 12])
+
+    def test_stall_takes_nearest_site_within_range(self):
+        from openrct2_mcp import placement_tools
+
+        game = self._game()
+        game.rides.place_stall.return_value = MagicMock()
+        with patch.object(placement_tools, "find_open_land", return_value=self.FAR_LAND):
+            result = placement_tools.place_ride_at_best_tile(game, MagicMock(), near_x=15, near_y=40)
+        self.assertEqual(result["tile"], [14, 42])
 
 
 if __name__ == "__main__":

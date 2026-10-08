@@ -165,17 +165,11 @@ def find_stall_sites(
     Every entrance-connected path tile is a candidate front, including plain
     straight (degree 2) walkway, not just junctions and dead ends.
     """
-    from openrct2_mcp.path_connectivity import (
-        CARDINAL_NEIGHBORS,
-        bfs_reachable,
-        collect_path_tiles,
-        get_park_entrance_tiles,
-        path_seeds_from_entrances,
-    )
+    from openrct2_mcp.path_connectivity import CARDINAL_NEIGHBORS, reachable_path_nodes
 
-    path_tiles = collect_path_tiles(game)
-    seeds = path_seeds_from_entrances(path_tiles, get_park_entrance_tiles(game))
-    reachable = bfs_reachable(path_tiles, seeds)
+    nodes, reachable_nodes = reachable_path_nodes(game)
+    path_tiles = {(x, y) for x, y, _ in nodes}
+    reachable = {(x, y) for x, y, _ in reachable_nodes}
 
     # Rank candidate (stall, path) pairs from cheap set data first, then validate
     # against the game lazily so only the best-ranked pads cost bridge calls.
@@ -385,6 +379,36 @@ def _connect_front_to_paths(game: RCT2, front: list[int], max_radius: int) -> di
     return {"from_path": anchor, **result}
 
 
+def _site_distance(site: dict[str, Any], near_x: int, near_y: int) -> int:
+    """Manhattan distance from (near_x, near_y) to the centre of an open-land site."""
+    ox, oy = site["origin"]
+    w, h = site.get("size") or (1, 1)
+    return abs(ox + w // 2 - near_x) + abs(oy + h // 2 - near_y)
+
+
+def _sites_near(
+    land: dict[str, Any],
+    near_x: int | None,
+    near_y: int | None,
+    max_distance: int | None,
+    label: str,
+) -> list[dict[str, Any]]:
+    """Open-land candidates within max_distance of the near point (all when there is no limit)."""
+    sites = land.get("candidates") or ([land["best"]] if land.get("best") else [])
+    if near_x is None or near_y is None or max_distance is None or not sites:
+        return sites
+    close = [s for s in sites if _site_distance(s, near_x, near_y) <= max_distance]
+    if close:
+        return close
+    nearest = min(sites, key=lambda s: _site_distance(s, near_x, near_y))
+    raise ValueError(
+        f"No open {label} site within {max_distance} tiles of ({near_x}, {near_y}); the nearest "
+        f"candidate is {_site_distance(nearest, near_x, near_y)} tiles away (origin "
+        f"{nearest['origin']}). Use a smaller ride, clear or buy land near that point, or "
+        "pass a larger max_distance (null for any distance)."
+    )
+
+
 def place_ride_at_best_tile(
     game: RCT2,
     ride_object: RideObjectInfo,
@@ -394,6 +418,7 @@ def place_ride_at_best_tile(
     is_stall: bool = True,
     connect_paths: bool = True,
     connect_radius: int = 15,
+    max_distance: int | None = 12,
 ) -> dict[str, Any]:
     """Place a stall or flat ride on open land; flat ride entrance/exit face the nearest path.
 
@@ -401,6 +426,8 @@ def place_ride_at_best_tile(
     Flat rides get entrance and exit on tiles adjacent to the real footprint
     (pyrct2 get_footprint), and with ``connect_paths`` a footpath is laid from
     the nearest walkway to each of them when one is within ``connect_radius``.
+    With a near point, sites whose centre is more than ``max_distance`` tiles
+    away are refused (ValueError) instead of placing the ride across the park.
     """
     obj = ride_object
     if is_tower_ride(obj):
@@ -410,17 +437,12 @@ def place_ride_at_best_tile(
         land = find_open_land(game, min_width=6, min_height=6, near_x=near_x, near_y=near_y)
         if not land.get("best"):
             raise ValueError("No suitable open land found")
-        origin = land["best"]["origin"]
+        origin = _sites_near(land, near_x, near_y, max_distance, "6x6")[0]["origin"]
         tx, ty = origin[0] + 2, origin[1] + 2
         ride = game.rides.place_stall(obj, Tile(tx, ty))
         return {"ride_id": ride.data.id, "name": ride.data.name, "tile": [tx, ty], "type": "stall"}
 
-    from openrct2_mcp.path_connectivity import (
-        bfs_reachable,
-        collect_path_tiles,
-        get_park_entrance_tiles,
-        path_seeds_from_entrances,
-    )
+    from openrct2_mcp.path_connectivity import collect_path_tiles, reachable_path_tiles
 
     direction = Direction.NORTH
     base = [(t.x, t.y) for t in game.rides.get_footprint(obj, Tile(0, 0), direction)]
@@ -434,16 +456,15 @@ def place_ride_at_best_tile(
     )
     if not land.get("best"):
         raise ValueError(f"No open land of {fp_w + 2}x{fp_h + 2} found")
+    sites = _sites_near(land, near_x, near_y, max_distance, f"{fp_w + 2}x{fp_h + 2}")
 
     path_tiles = collect_path_tiles(game)
-    reachable = bfs_reachable(
-        path_tiles, path_seeds_from_entrances(path_tiles, get_park_entrance_tiles(game))
-    )
+    reachable = reachable_path_tiles(game)
     # Walk candidate sites until one has an entrance and exit whose front tiles
     # can take a footpath (not inside another ride, owned, at the ride's height).
     access: dict[str, Any] | None = None
     rejected: list[list[int]] = []
-    for site in land.get("candidates") or [land["best"]]:
+    for site in sites:
         origin = site["origin"]
         tx, ty = origin[0] + 1 - min_dx, origin[1] + 1 - min_dy
         footprint = [(x + tx, y + ty) for x, y in base]
