@@ -51,12 +51,15 @@ class StationPadPlan:
 
 
 def entrance_exit_tiles_for_station(station: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Mirror ride-builder entranceExitPositionsFor for east/west vs north/south track."""
+    """Mirror ride-builder entranceExitPositionsFor for east/west vs north/south track.
+
+    Each direction points toward the station (0 = -x, 1 = +y, 2 = +x, 3 = -y).
+    """
     sx, sy = int(station["x"]), int(station["y"])
     direction = int(station.get("direction", 2))
     if direction in (0, 2):
-        entrance = {"x": sx, "y": sy - 1, "direction": 3}
-        exit_tile = {"x": sx, "y": sy + 1, "direction": 1}
+        entrance = {"x": sx, "y": sy - 1, "direction": 1}
+        exit_tile = {"x": sx, "y": sy + 1, "direction": 3}
     else:
         entrance = {"x": sx - 1, "y": sy, "direction": 2}
         exit_tile = {"x": sx + 1, "y": sy, "direction": 0}

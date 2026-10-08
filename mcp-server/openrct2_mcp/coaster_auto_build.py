@@ -128,7 +128,7 @@ def run_coaster_auto_build(
                 {
                     "attempt": attempt_idx + 1,
                     "phase": "plan",
-                    "plan": plan.to_dict(),
+                    "plan": plan.to_compact_dict(),
                     "skipped": True,
                 }
             )
@@ -165,7 +165,7 @@ def run_coaster_auto_build(
             "tested": test_result.get("tested", False),
             "stats": stats,
             "mood_gate_passed": mood_ok,
-            "plan": plan.to_dict(),
+            "plan": plan.to_compact_dict(),
             "build": build_result,
             "guest_access": exec_result.get("guest_access"),
             "pad_prep": exec_result.get("pad_prep"),

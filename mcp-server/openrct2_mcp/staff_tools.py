@@ -53,9 +53,18 @@ def list_staff(game: RCT2) -> list[dict]:
     return result
 
 
+# Orders bitmasks. Handyman: 1 sweep, 2 water gardens, 4 empty bins, 8 mow grass.
+# Mechanic: 1 inspect rides, 2 fix rides. Orders 0 hires staff who do nothing.
+DEFAULT_STAFF_ORDERS = {"HANDYMAN": 7, "MECHANIC": 3}
+
+
 def hire_staff_member(game: RCT2, staff_type: str, orders: int = 0) -> dict:
-    member = game.park.staff.hire(StaffType[staff_type.upper()], staff_orders=orders)
-    return {"staff_id": member._id, "type": staff_type, "name": member.data.name}
+    """Hire staff; orders 0 means the in-game defaults (an idle hire is never wanted)."""
+    kind = staff_type.upper()
+    if not orders:
+        orders = DEFAULT_STAFF_ORDERS.get(kind, 0)
+    member = game.park.staff.hire(StaffType[kind], staff_orders=orders)
+    return {"staff_id": member._id, "type": staff_type, "name": member.data.name, "orders": orders}
 
 
 def set_staff_patrol(

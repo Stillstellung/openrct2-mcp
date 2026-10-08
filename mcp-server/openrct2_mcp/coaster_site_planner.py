@@ -136,10 +136,42 @@ class CoasterBuildPlan:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    def to_compact_dict(self) -> dict[str, Any]:
+        """Plan dict for tool output: the bulky survey is replaced by a summary.
+
+        execute_coaster_plan never reads plan.survey, so the compact dict can be
+        passed straight back to coaster_execute_plan_tool.
+        """
+        data = self.to_dict()
+        data["survey"] = summarize_survey(self.survey)
+        return data
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CoasterBuildPlan:
         fields = cls.__dataclass_fields__
         return cls(**{k: v for k, v in data.items() if k in fields})
+
+
+def summarize_survey(survey: dict[str, Any], *, max_list: int = 10) -> dict[str, Any]:
+    """Shrink a block survey to counts and a bbox; long lists become counts plus samples."""
+    if not isinstance(survey, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key, value in survey.items():
+        if key == "blocks" and isinstance(value, list):
+            xs = [int(b["x"]) for b in value if isinstance(b, dict) and "x" in b]
+            ys = [int(b["y"]) for b in value if isinstance(b, dict) and "y" in b]
+            out["block_count"] = len(value)
+            if xs and ys:
+                out["blocks_bbox"] = {"x1": min(xs), "y1": min(ys), "x2": max(xs), "y2": max(ys)}
+        elif isinstance(value, dict):
+            out[key] = summarize_survey(value, max_list=max_list)
+        elif isinstance(value, list) and len(value) > max_list:
+            out[f"{key}_count"] = len(value)
+            out[f"{key}_sample"] = value[:max_list]
+        else:
+            out[key] = value
+    return out
 
 
 def poll_buildable_blocks(
@@ -357,8 +389,13 @@ def find_sites_from_blocks(
     sizes: tuple[tuple[int, int], ...] = COMPACT_SIZES,
     scan_step: int = 4,
     min_coverage: float = 0.85,
+    near: tuple[int, int] | None = None,
 ) -> list[dict[str, Any]]:
-    """Find rectangular sites where most tiles are buildable at track_z."""
+    """Find rectangular sites where most tiles are buildable at track_z.
+
+    With ``near``, sites are ordered by distance from the site center to that
+    point (score breaks ties) before truncation, so close sites are not dropped.
+    """
     if not blocks:
         return []
     z_values = sorted({int(b["z"]) for b in blocks})
@@ -389,7 +426,17 @@ def find_sites_from_blocks(
                         "score": cov * w * h,
                     }
                 )
-    candidates.sort(key=lambda c: c["score"], reverse=True)
+    if near is not None:
+        nx, ny = near
+
+        def _near_key(c: dict[str, Any]) -> tuple[float, float]:
+            cx = c["origin"][0] + (c["size"][0] - 1) / 2
+            cy = c["origin"][1] + (c["size"][1] - 1) / 2
+            return (abs(cx - nx) + abs(cy - ny), -c["score"])
+
+        candidates.sort(key=_near_key)
+    else:
+        candidates.sort(key=lambda c: c["score"], reverse=True)
     return candidates[:20]
 
 
@@ -450,11 +497,10 @@ def plan_coaster_build(
         compact_sizes = COMPACT_SIZES
         if ride_type in (6, 19):
             compact_sizes = ((12, 12), (10, 10))
-        sites = find_sites_from_blocks(blocks, track_z=track_z, sizes=compact_sizes)
-        if near_x is not None and near_y is not None:
-            sites.sort(
-                key=lambda s: abs(s["origin"][0] - near_x) + abs(s["origin"][1] - near_y),
-            )
+        near = (near_x, near_y) if near_x is not None and near_y is not None else None
+        sites = find_sites_from_blocks(
+            blocks, track_z=track_z, sizes=compact_sizes, near=near
+        )
         if not sites:
             return CoasterBuildPlan(
                 feasible=False,
@@ -700,7 +746,7 @@ def execute_coaster_plan(
     from openrct2_mcp.connection import ensure_unpaused
 
     if not plan.feasible:
-        return {"success": False, "error": "plan not feasible", "plan": plan.to_dict()}
+        return {"success": False, "error": "plan not feasible", "plan": plan.to_compact_dict()}
 
     if not plan.feasibility_probe:
         footprint = None
@@ -719,7 +765,7 @@ def execute_coaster_plan(
                 "success": False,
                 "error": probe.get("error") or "station protocol probe failed",
                 "feasibility_probe": probe,
-                "plan": plan.to_dict(),
+                "plan": plan.to_compact_dict(),
             }
 
     pad_data = plan.station_pad
@@ -749,7 +795,7 @@ def execute_coaster_plan(
         ride_object=ride_object,
     )
     if created.get("error"):
-        return {"success": False, "error": created, "plan": plan.to_dict()}
+        return {"success": False, "error": created, "plan": plan.to_compact_dict()}
 
     ride_id = int(created["rideId"])
 
@@ -878,5 +924,5 @@ def execute_coaster_plan(
         "build": build,
         "pad_prep": pad_prep,
         "guest_access": guest_result,
-        "plan": plan.to_dict(),
+        "plan": plan.to_compact_dict(),
     }

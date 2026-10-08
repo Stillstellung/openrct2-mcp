@@ -48,24 +48,157 @@ def set_ride_mode(game: RCT2, ride_id: int, mode: int) -> dict:
     return {"ride_id": ride_id, "mode": mode}
 
 
-def set_num_trains(game: RCT2, ride_id: int, count: int) -> dict:
+BLOCK_SECTIONED_MODES = {
+    int(RideMode.CONTINUOUS_CIRCUIT_BLOCK_SECTIONED),
+    int(RideMode.POWERED_LAUNCH_BLOCK_SECTIONED),
+}
+
+
+def _vehicle_readback(
+    game: RCT2, ride_builder: RideBuilderClient | None, ride_id: int, requested: dict[str, int]
+) -> dict[str, Any]:
+    """Report what the game applied; it silently clamps train and car counts."""
+    result: dict[str, Any] = {"ride_id": ride_id, "requested": requested}
+    if ride_builder is None:
+        return result
+    try:
+        trains = ride_builder.call("getRideTrains", {"rideId": ride_id})
+    except Exception as exc:  # older plugin without getRideTrains
+        result["readback_error"] = str(exc)
+        return result
+    result["running_trains"] = trains.get("trains")
+    result["cars_per_train"] = trains.get("carsPerTrain")
+    if trains.get("status") != "open" and not trains.get("trains"):
+        result["note"] = "Trains only exist while the ride is open or testing; open it, then read back."
+        return result
+    wanted = requested.get("trains")
+    if wanted and (trains.get("trains") or 0) < wanted:
+        note = f"The game clamped trains to {trains.get('trains')}."
+        if trains.get("mode") in BLOCK_SECTIONED_MODES:
+            note += (
+                " Block-sectioned rides allow stations + block sections - 1 trains"
+                " (a chain lift top counts as a block); add block brakes for more."
+            )
+        else:
+            note += " Use a block-sectioned mode with block brakes to run several trains safely."
+        result["note"] = note
+    return result
+
+
+def set_num_trains(
+    game: RCT2, ride_id: int, count: int, ride_builder: RideBuilderClient | None = None
+) -> dict:
     game.actions.ride_set_vehicle(
         ride=ride_id,
         type=RideSetVehicleType.NUM_TRAINS,
         value=count,
         colour=0,
     )
-    return {"ride_id": ride_id, "num_trains": count}
+    return _vehicle_readback(game, ride_builder, ride_id, {"trains": count})
 
 
-def set_cars_per_train(game: RCT2, ride_id: int, count: int) -> dict:
+def set_cars_per_train(
+    game: RCT2, ride_id: int, count: int, ride_builder: RideBuilderClient | None = None
+) -> dict:
     game.actions.ride_set_vehicle(
         ride=ride_id,
         type=RideSetVehicleType.NUM_CARS_PER_TRAIN,
         value=count,
         colour=0,
     )
-    return {"ride_id": ride_id, "cars_per_train": count}
+    return _vehicle_readback(game, ride_builder, ride_id, {"cars_per_train": count})
+
+
+# Segment fields that must match for a swap to keep the circuit closed.
+_SWAP_GEOMETRY_KEYS = (
+    "beginZ", "endZ", "endX", "endY", "beginDirection", "endDirection",
+    "beginSlope", "endSlope", "beginBank", "endBank",
+)
+
+
+def same_track_geometry(old: dict[str, Any] | None, new: dict[str, Any] | None) -> bool:
+    """True when two track segments start and end identically (safe in-place swap)."""
+    if not old or not new:
+        return False
+    return all(old.get(k) == new.get(k) for k in _SWAP_GEOMETRY_KEYS)
+
+
+def replace_track_piece(
+    game: RCT2,
+    ride_id: int,
+    tile_x: int,
+    tile_y: int,
+    new_track_type: int,
+    *,
+    tile_z: int | None = None,
+    brake_speed: int = 0,
+) -> dict[str, Any]:
+    """Swap one track piece of a ride for another with the same geometry.
+
+    Typical use: turn the flat before a station into block brakes (216) so a
+    block-sectioned coaster can run another train. Uses raw actions because
+    pyrct2's RideType enum lacks newer ride types (e.g. 99, Classic Wooden).
+    The ride is closed for the swap; the old piece is put back if placement fails.
+    """
+    from openrct2_mcp.design_lint import load_segments
+
+    raw_ride = get_ride_raw(game, ride_id)
+    if raw_ride is None:
+        raise ValueError(f"Ride {ride_id} not found")
+    tile = game._query("get_tile", {"x": tile_x, "y": tile_y})
+    pieces = [
+        el for el in tile.get("elements", [])
+        if el.get("type") == "track" and el.get("ride") == ride_id
+        and (tile_z is None or int(el.get("baseZ", 0)) // 8 == tile_z)
+    ]
+    if len(pieces) != 1:
+        raise ValueError(
+            f"Expected one track piece of ride {ride_id} at ({tile_x},{tile_y})"
+            f"{'' if tile_z is None else f' z{tile_z}'}, found {len(pieces)}; pass tile_z"
+        )
+    old = pieces[0]
+    if int(old.get("sequence", 0)) != 0:
+        raise ValueError("That tile holds a later block of a multi-tile piece; use the piece's first tile")
+    segments = load_segments()
+    old_type = int(old["trackType"])
+    if not same_track_geometry(segments.get(old_type), segments.get(new_track_type)):
+        raise ValueError(
+            f"Track type {new_track_type} does not share piece {old_type}'s geometry; "
+            "only same-shape swaps keep the circuit closed"
+        )
+    x, y, z, direction = tile_x * 32, tile_y * 32, int(old["baseZ"]), int(old["direction"])
+    game.actions.ride_set_status(ride=ride_id, status=RideStatus.CLOSED)
+    game.execute("trackremove", {
+        "x": x, "y": y, "z": z, "direction": direction, "trackType": old_type, "sequence": 0,
+    })
+
+    def place(track_type: int, speed: int) -> dict:
+        return game.execute("trackplace", {
+            "x": x, "y": y, "z": z, "direction": direction, "ride": ride_id,
+            "trackType": track_type, "rideType": int(raw_ride["type"]),
+            "brakeSpeed": speed, "colour": 0, "seatRotation": 4,
+            "trackPlaceFlags": 0, "isFromTrackDesign": False,
+        })
+
+    try:
+        place(new_track_type, brake_speed)
+    except Exception as exc:
+        place(old_type, 0)
+        return {
+            "ok": False,
+            "ride_id": ride_id,
+            "error": str(exc),
+            "restored_track_type": old_type,
+            "note": "Ride left closed; reopen it when ready.",
+        }
+    return {
+        "ok": True,
+        "ride_id": ride_id,
+        "tile": [tile_x, tile_y, z // 8],
+        "old_track_type": old_type,
+        "new_track_type": new_track_type,
+        "note": "Ride left closed; reopen it (and set trains) when ready.",
+    }
 
 
 def set_ride_colour_scheme(game: RCT2, ride_id: int, appearance_type: int, colour: int) -> dict:

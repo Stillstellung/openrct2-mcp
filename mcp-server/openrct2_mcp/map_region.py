@@ -53,6 +53,11 @@ def get_map_bounds(game: RCT2) -> dict[str, int]:
     return {"min_x": 0, "min_y": 0, "max_x": bounds.x - 1, "max_y": bounds.y - 1, "width": bounds.x, "height": bounds.y}
 
 
+def _compact_grid(grid: list[list[int | None]]) -> list[str]:
+    """Render a numeric grid as one space-separated string per row."""
+    return [" ".join("-" if v is None else str(v) for v in row) for row in grid]
+
+
 def get_map_region(
     game: RCT2,
     x: int,
@@ -118,11 +123,15 @@ def get_map_region(
             base_z_grid.append(z_row)
             slope_grid.append(s_row)
         if "ownership" in layers:
-            result_layers["ownership"] = ownership_grid
+            result_layers["ownership"] = _compact_grid(ownership_grid)
         if "base_z" in layers:
-            result_layers["base_z"] = base_z_grid
+            result_layers["base_z"] = _compact_grid(base_z_grid)
         if "slope" in layers:
-            result_layers["slope"] = slope_grid
+            result_layers["slope"] = _compact_grid(slope_grid)
+        result_layers["grid_format"] = (
+            "numeric layers: one string per row, north (first y) to south; "
+            "space-separated values west to east; '-' = no data"
+        )
 
     result_layers["ascii"] = "\n".join(f"y{ty:3d} " + rows[i] for i, ty in enumerate(range(y, y2 + 1)))
     result_layers["legend"] = ". empty  P path  T track  s scenery"

@@ -2,7 +2,15 @@
 
 import unittest
 
-from openrct2_mcp.install import merge_mcp_config, set_ini_value
+import tempfile
+from pathlib import Path
+
+from openrct2_mcp.install import (
+    RIDE_BUILDER_SRC,
+    merge_mcp_config,
+    ride_builder_install_state,
+    set_ini_value,
+)
 
 
 class SetIniValueTests(unittest.TestCase):
@@ -53,6 +61,25 @@ class MergeMcpConfigTests(unittest.TestCase):
     def test_empty_config(self):
         merged = merge_mcp_config({}, "/repo/.venv/bin/python")
         self.assertEqual(list(merged["mcpServers"]), ["openrct2"])
+
+
+class RideBuilderInstallStateTests(unittest.TestCase):
+    def test_reports_missing_stale_and_current(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin_dir = Path(tmp)
+            state = ride_builder_install_state(plugin_dir)
+            self.assertFalse(state["up_to_date"])
+            self.assertIn("not installed", state["warning"])
+
+            (plugin_dir / "ride-builder.js").write_text("// old build", encoding="utf-8")
+            state = ride_builder_install_state(plugin_dir)
+            self.assertFalse(state["up_to_date"])
+            self.assertIn("differs", state["warning"])
+
+            (plugin_dir / "ride-builder.js").write_bytes(RIDE_BUILDER_SRC.read_bytes())
+            state = ride_builder_install_state(plugin_dir)
+            self.assertTrue(state["up_to_date"])
+            self.assertNotIn("warning", state)
 
 
 if __name__ == "__main__":

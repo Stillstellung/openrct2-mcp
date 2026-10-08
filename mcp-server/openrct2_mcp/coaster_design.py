@@ -74,7 +74,7 @@ def place_coaster_design(
     spec["colour1"] = clamp_ride_colour(int(spec.get("colour1", 0)))
     spec["colour2"] = clamp_ride_colour(int(spec.get("colour2", 0)))
 
-    return ride_builder.call(
+    placed = ride_builder.call(
         "placeRideDesign",
         {
             "design": spec,
@@ -88,6 +88,23 @@ def place_coaster_design(
             "test_ride": test_ride,
         },
     )
+    return summarize_placement_log(placed)
+
+
+def summarize_placement_log(placed: Any) -> Any:
+    """Replace placeRideDesign's per-piece placement_log with counts plus failed entries."""
+    if not isinstance(placed, dict) or not isinstance(placed.get("placement_log"), list):
+        return placed
+    log = placed["placement_log"]
+    failed = [entry for entry in log if not (isinstance(entry, dict) and entry.get("ok"))]
+    out = {k: v for k, v in placed.items() if k != "placement_log"}
+    out["placement_summary"] = {
+        "pieces_logged": len(log),
+        "ok_count": len(log) - len(failed),
+        "failed_count": len(failed),
+        "failed": failed,
+    }
+    return out
 
 
 def list_track_segments(ride_builder: RideBuilderClient) -> list[dict[str, Any]]:

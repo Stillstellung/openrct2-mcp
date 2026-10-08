@@ -95,6 +95,57 @@ class _SpacingGrid:
         return best
 
 
+# Surface ownership flag (OWNERSHIP_OWNED); the approach road outside the gate lacks it.
+_OWNERSHIP_OWNED = 1 << 5
+
+
+def _surface_owned(surface: Any) -> bool:
+    """True when the park owns this surface (plugin hasOwnership, else the owned bit)."""
+    has = getattr(surface, "hasOwnership", None)
+    if isinstance(has, bool):
+        return has
+    return bool(int(getattr(surface, "ownership", 0) or 0) & _OWNERSHIP_OWNED)
+
+
+def _tile_surface(tile: Any) -> Any | None:
+    for elem in getattr(tile, "elements", None) or []:
+        if getattr(elem, "type", None) == "surface":
+            return elem
+    return None
+
+
+def _fetch_tiles(
+    game: RCT2, tiles: set[tuple[int, int]], *, chunk_size: int = _TILE_SCAN_CHUNK
+) -> dict[tuple[int, int], Any]:
+    """Fetch tile data for the given tiles via chunked get_tiles calls."""
+    if not tiles:
+        return {}
+    bounds = game.world.get_bounds()
+    out: dict[tuple[int, int], Any] = {}
+    for cx, cy in sorted({(x // chunk_size, y // chunk_size) for x, y in tiles}):
+        x0, y0 = max(0, cx * chunk_size), max(0, cy * chunk_size)
+        x1 = min(bounds.x - 1, cx * chunk_size + chunk_size - 1)
+        y1 = min(bounds.y - 1, cy * chunk_size + chunk_size - 1)
+        if x0 > x1 or y0 > y1:
+            continue
+        for tile in game.world.get_tiles(Tile(x0, y0), Tile(x1, y1)):
+            out[(tile.x, tile.y)] = tile
+    return out
+
+
+def _owned_subset(
+    tiles: set[tuple[int, int]], tile_index: dict[tuple[int, int], Any]
+) -> set[tuple[int, int]]:
+    """Tiles whose surface the park owns; tiles missing from the index are kept."""
+    owned: set[tuple[int, int]] = set()
+    for xy in tiles:
+        tile = tile_index.get(xy)
+        surface = _tile_surface(tile) if tile is not None else None
+        if surface is None or _surface_owned(surface):
+            owned.add(xy)
+    return owned
+
+
 def _resolve_object_index(game: RCT2, obj_type: str, identifier: str) -> int:
     data = game._query("get_object", {"type": obj_type, "identifier": identifier})
     return int(data["index"])
@@ -527,6 +578,15 @@ def fill_missing_benches_and_bins(
         elif kind is None:
             empty_candidates.append((tx, ty, base_z, is_sloped))
 
+    skipped_unowned = 0
+    try:
+        candidate_tiles = {(c[0], c[1]) for c in empty_candidates}
+        owned = _owned_subset(candidate_tiles, _fetch_tiles(game, candidate_tiles))
+        skipped_unowned = len(candidate_tiles - owned)
+        empty_candidates = [c for c in empty_candidates if (c[0], c[1]) in owned]
+    except Exception:
+        pass  # ownership unknown: keep candidates, failures are reported per tile
+
     empty_candidates.sort(key=lambda t: (t[1], t[0]))
     planned_bins: list[dict[str, Any]] = []
     planned_benches: list[dict[str, Any]] = []
@@ -555,6 +615,7 @@ def fill_missing_benches_and_bins(
             "planned_bins": len(planned_bins),
             "planned_benches": len(planned_benches),
             "skipped_sloped_benches": skipped_sloped_benches,
+            "skipped_unowned_tiles": skipped_unowned,
             "bins": planned_bins[:40],
             "benches": planned_benches[:40],
         }
@@ -601,6 +662,7 @@ def fill_missing_benches_and_bins(
         "placed_bins": len(placed_bins),
         "placed_benches": len(placed_benches),
         "skipped_sloped_benches": skipped_sloped_benches,
+        "skipped_unowned_tiles": skipped_unowned,
         "failed": failed[:20],
         "bins": placed_bins[:40],
         "benches": placed_benches[:40],
@@ -684,6 +746,71 @@ def _place_bench_addition(game: RCT2, tile: Tile, primary: FootpathAdditions) ->
     return None
 
 
+# Decorative small scenery fallbacks, in preference order: (tier, name keywords, identifier prefixes).
+_DECOR_TIERS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
+    ("flowers", ("flower",), ()),
+    ("shrubs", ("shrub", "bush", "hedge"), ("rct2.scenery_small.tsh",)),
+    (
+        "topiary",
+        ("topiary",),
+        (
+            "rct2.scenery_small.tht",
+            "rct2.scenery_small.tcb",
+            "rct2.scenery_small.tdm",
+            "rct2.scenery_small.tsd",
+        ),
+    ),
+    (
+        "ornamental_trees",
+        ("ornamental",),
+        (
+            "rct2.scenery_small.torn",
+            "rct2.scenery_small.ts4",
+            "rct2.scenery_small.ts5",
+            "rct2.scenery_small.ts6",
+        ),
+    ),
+)
+_DECOR_MAX_VARIANTS = 6
+_NEIGHBOURS = ((1, 0), (0, 1), (-1, 0), (0, -1))
+
+
+def _pick_decor(game: RCT2, preferred: str | None) -> tuple[str, list[str]]:
+    """Choose loaded decorative small scenery: the preset's object, else the best fallback tier."""
+    try:
+        objects = game._query("get_objects", {"type": "small_scenery"}) or []
+    except Exception:
+        objects = []
+    idents = [(str(o.get("identifier", "")), str(o.get("name") or "")) for o in objects]
+    if preferred:
+        want = preferred.lower()
+        for ident, _ in idents:
+            low = ident.lower()
+            if low == want or low.endswith("." + want):
+                return "preset", [ident]
+    for tier, keywords, prefixes in _DECOR_TIERS:
+        matches = [
+            ident
+            for ident, name in idents
+            if any(k in name.lower() for k in keywords) or any(ident.lower().startswith(pre) for pre in prefixes)
+        ]
+        if matches:
+            return tier, matches[:_DECOR_MAX_VARIANTS]
+    return "none", []
+
+
+def _is_free_ground(tile: Any) -> bool:
+    """Owned, dry ground with nothing on it but the surface (no path, track, entrance, scenery)."""
+    elements = getattr(tile, "elements", None) or []
+    if any(getattr(e, "type", None) != "surface" for e in elements):
+        return False
+    surface = _tile_surface(tile)
+    if surface is None or not _surface_owned(surface):
+        return False
+    water = int(getattr(surface, "waterHeight", 0) or 0)
+    return water <= int(getattr(surface, "baseZ", 0) or 0)
+
+
 def apply_theme_preset(
     game: RCT2,
     name: str = "cute",
@@ -696,29 +823,62 @@ def apply_theme_preset(
     region_height: int | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Apply a theme along footpaths (benches, bins, flowers)."""
+    """Apply a theme along owned footpaths (benches, bins, flowers or other loaded decor)."""
     preset = load_theme_preset(name)
     paths = game.world.get_elements_by_type("footpath")
-    path_tiles = sorted({(p["tileX"], p["tileY"]) for p in paths})
+    path_tiles = sorted({(p["tileX"], p["tileY"]) for p in paths if not p.get("isQueue")})
+    queue_tiles = {(p["tileX"], p["tileY"]) for p in paths if p.get("isQueue")}
     if None not in (region_x, region_y, region_width, region_height):
         x2 = region_x + region_width - 1
         y2 = region_y + region_height - 1
         path_tiles = [(x, y) for x, y in path_tiles if region_x <= x <= x2 and region_y <= y <= y2]
+
+    wanted = set(path_tiles)
+    for x, y in path_tiles:
+        wanted.update((x + dx, y + dy) for dx, dy in _NEIGHBOURS)
+    try:
+        tile_index = _fetch_tiles(game, wanted)
+    except Exception:
+        tile_index = {}
+    owned = _owned_subset(set(path_tiles), tile_index)
+    skipped_unowned = len(path_tiles) - len(owned)
+    path_tiles = [t for t in path_tiles if t in owned]
+
+    flower_ident = preset.get("flower_identifier")
+    decor_tier, decor_idents = _pick_decor(game, flower_ident)
+    decor_info: dict[str, Any] = {"requested": flower_ident, "used": decor_tier, "identifiers": decor_idents}
+    if decor_tier not in ("preset", "flowers") and flower_ident:
+        decor_info["note"] = (
+            f"{flower_ident} is not loaded; fell back to {decor_tier}"
+            if decor_idents
+            else f"{flower_ident} is not loaded and no flowers, shrubs, topiary or ornamental trees are loaded"
+        )
+
     if dry_run:
         return {
             "dry_run": True,
             "theme": name,
             "path_tiles_in_scope": len(path_tiles),
+            "skipped_unowned_path_tiles": skipped_unowned,
             "estimated_placements": max(1, len(path_tiles) // max(2, path_spacing)),
+            "decor": decor_info,
         }
     spacing = max(2, path_spacing)
     placed: list[dict] = []
 
     bench_ident = preset.get("bench_identifier")
-    flower_ident = preset.get("flower_identifier")
     bin_ident = preset.get("bin_identifier")
     bench_addition = _resolve_footpath_addition(bench_ident, "BENCH1")
     bin_addition = _resolve_footpath_addition(bin_ident, "LITTER1")
+
+    # Never decorate tiles next to ride/park entrances or queues (they may need a path).
+    keep_clear: set[tuple[int, int]] = set(queue_tiles)
+    for xy, tile in tile_index.items():
+        if any(getattr(e, "type", None) == "entrance" for e in getattr(tile, "elements", None) or []):
+            keep_clear.add(xy)
+    blocked = {(x + dx, y + dy) for x, y in keep_clear for dx, dy in _NEIGHBOURS} | keep_clear
+    used_decor: set[tuple[int, int]] = set()
+    decor_count = 0
 
     for i, (tx, ty) in enumerate(path_tiles):
         if i % spacing != 0:
@@ -733,13 +893,21 @@ def apply_theme_preset(
                 placed.append({"type": "bin", "tile": [tx, ty]})
             except Exception:
                 pass
-        elif flower_ident and (i % max(2, int(spacing * density)) == 0):
-            try:
-                # Offset flower beside path
-                place_small_scenery(game, flower_ident, tx + 1, ty, primary_colour=preset.get("flower_colour", 24))
-                placed.append({"type": "flower", "tile": [tx + 1, ty]})
-            except Exception:
-                pass
+        elif decor_idents and (i % max(2, int(spacing * density)) == 0):
+            for dx, dy in _NEIGHBOURS:
+                spot = (tx + dx, ty + dy)
+                tile = tile_index.get(spot)
+                if spot in used_decor or spot in blocked or tile is None or not _is_free_ground(tile):
+                    continue
+                ident = decor_idents[decor_count % len(decor_idents)]
+                try:
+                    place_small_scenery(game, ident, spot[0], spot[1], primary_colour=preset.get("flower_colour", 24))
+                except Exception:
+                    continue
+                used_decor.add(spot)
+                decor_count += 1
+                placed.append({"type": decor_tier, "identifier": ident, "tile": list(spot)})
+                break
 
     grass = preset.get("grass_surface_style")
     if grass is not None and path_tiles:
@@ -760,4 +928,11 @@ def apply_theme_preset(
         except Exception:
             pass
 
-    return {"theme": name, "density": density, "placed_count": len(placed), "placed": placed[:50]}
+    return {
+        "theme": name,
+        "density": density,
+        "placed_count": len(placed),
+        "decor": {**decor_info, "placed": decor_count},
+        "skipped_unowned_path_tiles": skipped_unowned,
+        "placed": placed[:50],
+    }

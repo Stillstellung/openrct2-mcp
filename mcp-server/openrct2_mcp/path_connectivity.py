@@ -12,37 +12,48 @@ from pyrct2.world._tile import Tile
 
 CARDINAL_NEIGHBORS = [(-1, 0), (1, 0), (0, -1), (0, 1)]
 
+# Tile lists in the full connectivity report are capped at this many entries.
+REPORT_TILE_SAMPLE = 20
+
 
 def collect_path_tiles(game: RCT2) -> set[tuple[int, int]]:
     """All footpath tile coordinates in the park."""
     return {(p["tileX"], p["tileY"]) for p in game.world.get_elements_by_type("footpath")}
 
 
+def collect_queue_tiles(game: RCT2) -> set[tuple[int, int]]:
+    """Footpath tiles that hold a ride queue line."""
+    return {
+        (p["tileX"], p["tileY"])
+        for p in game.world.get_elements_by_type("footpath")
+        if p.get("isQueue")
+    }
+
+
+# EntranceElement.object is the entrance type: 0 ride entrance, 1 ride exit,
+# 2 park entrance (pyrct2 park._find_entrances uses the same value).
+PARK_ENTRANCE_OBJECT = 2
+
+
 def _is_park_entrance_element(ent: dict[str, Any]) -> bool:
-    """True for park gate entrances, false for ride station entrances."""
-    ride = ent.get("ride") if "ride" in ent else ent.get("rideIndex")
-    obj = int(ent.get("object", -1))
-    if isinstance(ride, int) and ride > 0:
+    """True for park gate entrances, false for ride station entrances/exits."""
+    try:
+        return int(ent.get("object", -1)) == PARK_ENTRANCE_OBJECT
+    except (TypeError, ValueError):
         return False
-    if obj == 2:
-        return False
-    return obj in (0, 1)
 
 
 def get_park_entrance_tiles(game: RCT2) -> list[tuple[int, int]]:
-    """Park gate entrance/exit tiles (not ride station entrances)."""
+    """Park gate tiles (all tiles of each gate); never ride entrances or exits."""
     entrances = game.world.get_elements_by_type("entrance")
     park_tiles: list[tuple[int, int]] = []
-    fallback: list[tuple[int, int]] = []
     for ent in entrances:
-        tx, ty = int(ent["tileX"]), int(ent["tileY"])
-        if _is_park_entrance_element(ent):
-            park_tiles.append((tx, ty))
-        else:
-            fallback.append((tx, ty))
-    if park_tiles:
-        return park_tiles
-    return fallback
+        if not _is_park_entrance_element(ent):
+            continue
+        coord = (int(ent["tileX"]), int(ent["tileY"]))
+        if coord not in park_tiles:
+            park_tiles.append(coord)
+    return park_tiles
 
 
 def path_seeds_from_entrances(
@@ -117,12 +128,17 @@ def find_one_tile_gaps(
     *,
     bounds: tuple[int, int, int, int] | None = None,
     near: Iterable[tuple[int, int]] | None = None,
+    blocked: Iterable[tuple[int, int]] | None = None,
+    queue_tiles: Iterable[tuple[int, int]] | None = None,
 ) -> list[list[int]]:
     """Non-path tiles that bridge two path neighbors on the same axis.
 
     ``bounds`` (x1, y1, x2, y2) only considers gaps beside path tiles inside
     that rectangle; ``near`` only considers gaps beside those path tiles.
+    ``blocked`` tiles (park entrance gates) are never reported as gaps, and
+    neither are tiles touching any of ``queue_tiles`` (find_queue_adjacent_gaps).
     """
+    blocked_set = set(blocked or ()) | queue_adjacent_tiles(queue_tiles or ())
     sources = path_tiles if near is None else {t for t in near if t in path_tiles}
     if bounds is not None:
         x1, y1, x2, y2 = bounds
@@ -131,7 +147,7 @@ def find_one_tile_gaps(
         (tx + dx, ty + dy)
         for tx, ty in sources
         for dx, dy in CARDINAL_NEIGHBORS
-        if (tx + dx, ty + dy) not in path_tiles
+        if (tx + dx, ty + dy) not in path_tiles and (tx + dx, ty + dy) not in blocked_set
     }
 
     gaps: list[list[int]] = []
@@ -143,27 +159,89 @@ def find_one_tile_gaps(
     return sorted(gaps)
 
 
-def analyze_path_connectivity(game: RCT2) -> dict[str, Any]:
-    """Summarize path reachability from park entrance and detect one-tile gaps."""
+def queue_adjacent_tiles(queue_tiles: Iterable[tuple[int, int]]) -> set[tuple[int, int]]:
+    """Tiles touching a queue tile on any side (a path there would merge into the queue)."""
+    return {(qx + dx, qy + dy) for qx, qy in queue_tiles for dx, dy in CARDINAL_NEIGHBORS}
+
+
+def find_queue_adjacent_gaps(
+    path_tiles: set[tuple[int, int]],
+    queue_tiles: Iterable[tuple[int, int]],
+    *,
+    blocked: Iterable[tuple[int, int]] | None = None,
+) -> list[list[int]]:
+    """One-tile gaps that touch a queue: deliberate buffers that repair never fills."""
+    near_queue = queue_adjacent_tiles(queue_tiles)
+    return [g for g in find_one_tile_gaps(path_tiles, blocked=blocked) if (g[0], g[1]) in near_queue]
+
+
+def analyze_path_connectivity(game: RCT2, *, sample: int = REPORT_TILE_SAMPLE) -> dict[str, Any]:
+    """Summarize path reachability from park entrance and detect one-tile gaps.
+
+    ``disconnected_components`` lists only networks not connected to a park
+    entrance (empty for a healthy park). Each tile list holds at most
+    ``sample`` entries; the matching ``*_count`` keys give the totals.
+    """
     path_tiles = collect_path_tiles(game)
+    queue_tiles = collect_queue_tiles(game)
     entrance_tiles = get_park_entrance_tiles(game)
     seeds = path_seeds_from_entrances(path_tiles, entrance_tiles)
     reachable = bfs_reachable(path_tiles, seeds)
     unreachable = sorted(path_tiles - reachable)
-    components = _find_disconnected_components(path_tiles)
-    gaps = find_one_tile_gaps(path_tiles)
+    # Park gates act as connectors: paths outside and inside the gate are one network.
+    entrance_set = set(entrance_tiles)
+    components = [
+        [[x, y] for x, y in comp if (x, y) not in entrance_set]
+        for comp in disconnected_components(path_tiles | entrance_set)
+        if not any(t in entrance_set or t in reachable for t in comp)
+    ]
+    components = sorted((comp for comp in components if comp), key=len, reverse=True)
+    gaps = find_one_tile_gaps(path_tiles, blocked=entrance_set, queue_tiles=queue_tiles)
+    queue_gaps = find_queue_adjacent_gaps(path_tiles, queue_tiles, blocked=entrance_set)
 
     return {
         "entrance_tiles": [[x, y] for x, y in entrance_tiles],
         "path_tile_count": len(path_tiles),
+        "queue_tile_count": len(queue_tiles),
         "reachable_count": len(reachable),
-        "unreachable_tiles": [[x, y] for x, y in unreachable],
+        "unreachable_tiles": [[x, y] for x, y in unreachable[:sample]],
         "unreachable_count": len(unreachable),
-        "disconnected_components": components,
+        "disconnected_components": [
+            {"size": len(comp), "tiles": comp[:sample]} for comp in components[:sample]
+        ],
         "disconnected_component_count": len(components),
-        "one_tile_gaps": gaps,
+        "one_tile_gaps": gaps[:sample],
         "one_tile_gap_count": len(gaps),
+        "queue_adjacent_gaps": queue_gaps[:sample],
+        "queue_adjacent_gap_count": len(queue_gaps),
+        "tile_lists_capped_at": sample,
     }
+
+
+def summarize_connectivity(full: dict[str, Any], *, sample: int = 10) -> dict[str, Any]:
+    """Compact form of analyze_path_connectivity: counts, sizes, short samples."""
+    unreachable = full.get("unreachable_tiles") or []
+    components = full.get("disconnected_components") or []
+    gaps = full.get("one_tile_gaps") or []
+    summary = {
+        "entrance_tiles": full.get("entrance_tiles", []),
+        "path_tile_count": full.get("path_tile_count", 0),
+        "reachable_count": full.get("reachable_count", 0),
+        "unreachable_count": full.get("unreachable_count", len(unreachable)),
+        "unreachable_sample": unreachable[:sample],
+        "disconnected_component_count": full.get(
+            "disconnected_component_count", len(components)
+        ),
+        "unreachable_components": [
+            {"size": c["size"], "sample": c["tiles"][:sample]} for c in components[:sample]
+        ],
+        "one_tile_gap_count": full.get("one_tile_gap_count", len(gaps)),
+        "one_tile_gaps_sample": gaps[:sample],
+    }
+    if full.get("queue_adjacent_gap_count"):
+        summary["queue_adjacent_gap_count"] = full["queue_adjacent_gap_count"]
+        summary["queue_adjacent_gaps_sample"] = (full.get("queue_adjacent_gaps") or [])[:sample]
+    return summary
 
 
 def repair_one_tile_gaps(
@@ -178,7 +256,13 @@ def repair_one_tile_gaps(
     ``surface`` sets the fill surface (default: the scenario's default path).
     """
     path_tiles = collect_path_tiles(game)
-    gaps = find_one_tile_gaps(path_tiles, near=near)
+    # Gaps touching a queue stay open: a plain path there would merge into the queue.
+    gaps = find_one_tile_gaps(
+        path_tiles,
+        near=near,
+        blocked=get_park_entrance_tiles(game),
+        queue_tiles=collect_queue_tiles(game),
+    )
     placed: list[list[int]] = []
     failed: list[list[int]] = []
     for gx, gy in gaps:
@@ -235,10 +319,14 @@ def connect_path_route_with_validation(
     skipped: list[list[int]] = []
     warnings: list[str] = []
 
+    entrance_set = set(entrance_tiles)
+
     def try_place(tx: int, ty: int) -> bool:
         coord = (tx, ty)
         if coord in path_tiles and coord in reachable:
             return True
+        if coord in entrance_set:
+            return False
         if not any((tx + dx, ty + dy) in reachable for dx, dy in CARDINAL_NEIGHBORS):
             return False
         try:

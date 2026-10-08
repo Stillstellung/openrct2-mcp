@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+from pyrct2._generated.objects import RIDE_TYPE_STR_TO_INT, RIDE_TYPE_TRACK_ELEMS
 from pyrct2.client import RCT2
 from pyrct2.world._tile import Tile
 
@@ -45,16 +48,56 @@ def rides_near(game: RCT2, ride_builder: RideBuilderClient, tx: int, ty: int, ra
     return nearby
 
 
-def footpath_grid(game: RCT2, tx: int, ty: int, radius: int) -> tuple[list[str], dict]:
-    """ASCII grid of paths/queues in a square region centered on (tx, ty)."""
-    paths = game.world.get_elements_by_type("footpath")
-    in_region = [
-        p
-        for p in paths
-        if abs(p["tileX"] - tx) <= radius and abs(p["tileY"] - ty) <= radius
-    ]
-    path_cells = {(p["tileX"], p["tileY"]): ("Q" if p.get("isQueue") else "P") for p in in_region}
+# Flat rides and stalls are track elements too; tell them apart from coaster track.
+FLAT_RIDE_TYPES = {
+    RIDE_TYPE_STR_TO_INT[name] for name in RIDE_TYPE_TRACK_ELEMS if name in RIDE_TYPE_STR_TO_INT
+}
+FLAT_TRACK_TYPES = set(RIDE_TYPE_TRACK_ELEMS.values())
 
+# Entrance element "object" is the entrance type.
+_ENTRANCE_MARKERS = {0: "E", 1: "X", 2: "G"}
+
+AREA_LEGEND = (
+    ". empty  P path  Q queue  T ride track  R flat ride/stall  "
+    "E ride entrance  X ride exit  G park entrance  s scenery  + center"
+)
+
+
+def _elem_get(elem: Any, key: str, default: Any = None) -> Any:
+    if isinstance(elem, dict):
+        return elem.get(key, default)
+    return getattr(elem, key, default)
+
+
+def tile_marker(elements: list[Any]) -> str:
+    """One-character marker for a tile; entrances win, then paths, track, scenery."""
+    kinds = [_elem_get(e, "type") for e in elements]
+    for elem, kind in zip(elements, kinds):
+        if kind == "entrance":
+            try:
+                return _ENTRANCE_MARKERS.get(int(_elem_get(elem, "object", -1)), "E")
+            except (TypeError, ValueError):
+                return "E"
+    for elem, kind in zip(elements, kinds):
+        if kind == "footpath":
+            return "Q" if _elem_get(elem, "isQueue") else "P"
+    for elem, kind in zip(elements, kinds):
+        if kind == "track":
+            if (
+                _elem_get(elem, "rideType") in FLAT_RIDE_TYPES
+                or _elem_get(elem, "trackType") in FLAT_TRACK_TYPES
+            ):
+                return "R"
+            return "T"
+    if any(kind in ("small_scenery", "large_scenery") for kind in kinds):
+        return "s"
+    return "."
+
+
+def render_area_grid(
+    markers: dict[tuple[int, int], str], tx: int, ty: int, radius: int
+) -> list[str]:
+    """ASCII rows for a square region centered on (tx, ty)."""
     lines: list[str] = []
     for y in range(ty - radius, ty + radius + 1):
         row = []
@@ -62,14 +105,44 @@ def footpath_grid(game: RCT2, tx: int, ty: int, radius: int) -> tuple[list[str],
             if x == tx and y == ty:
                 row.append("+")
             else:
-                row.append(path_cells.get((x, y), "."))
+                row.append(markers.get((x, y), "."))
         lines.append(f"y{y:3d} " + "".join(row))
     lines.append(f"     {'x' * (radius * 2 + 1)}")
     lines.append(f"     x{tx - radius}..{tx + radius}")
+    return lines
 
-    return lines, {
-        "path_tiles": len(path_cells),
-        "queue_tiles": sum(1 for v in path_cells.values() if v == "Q"),
+
+def footpath_grid(game: RCT2, tx: int, ty: int, radius: int) -> tuple[list[str], dict]:
+    """ASCII grid of paths, queues, rides, entrances and scenery around (tx, ty).
+
+    Uses one get_tiles call for the region; falls back to the footpath-only
+    bulk query if that fails.
+    """
+    markers: dict[tuple[int, int], str] = {}
+    try:
+        tiles = game.world.get_tiles(Tile(tx - radius, ty - radius), Tile(tx + radius, ty + radius))
+        for td in tiles:
+            mark = tile_marker(list(td.elements))
+            if mark != ".":
+                markers[(td.x, td.y)] = mark
+    except Exception:
+        paths = game.world.get_elements_by_type("footpath")
+        markers = {
+            (p["tileX"], p["tileY"]): ("Q" if p.get("isQueue") else "P")
+            for p in paths
+            if abs(p["tileX"] - tx) <= radius and abs(p["tileY"] - ty) <= radius
+        }
+
+    counts: dict[str, int] = {}
+    for mark in markers.values():
+        counts[mark] = counts.get(mark, 0) + 1
+    return render_area_grid(markers, tx, ty, radius), {
+        "path_tiles": counts.get("P", 0) + counts.get("Q", 0),
+        "queue_tiles": counts.get("Q", 0),
+        "track_tiles": counts.get("T", 0),
+        "flat_ride_tiles": counts.get("R", 0),
+        "ride_entrances": counts.get("E", 0),
+        "ride_exits": counts.get("X", 0),
     }
 
 
@@ -103,5 +176,5 @@ def area_context(
         "paths": path_stats,
         "nearby_rides": nearby[:15],
         "ascii_map": "\n".join(grid),
-        "legend": ". empty  P path  Q queue  + center",
+        "legend": AREA_LEGEND,
     }

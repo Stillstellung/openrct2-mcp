@@ -145,7 +145,8 @@ def merge_ride_builder_maintenance(
             merged[summary_key] = ride_builder_row.get(rb_key)
     if ride_builder_row.get("activeBreakdown"):
         merged["active_breakdown"] = True
-    station_times = ride_builder_row.get("stationQueueTimes")
+    # Older plugin builds report all 255 station slots; keep only stations with a queue.
+    station_times = [s for s in ride_builder_row.get("stationQueueTimes") or [] if s.get("queueTime")]
     if station_times and merged.get("station_queue_times") is None:
         merged["station_queue_times"] = station_times
     return merged

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -22,12 +23,312 @@ TEST_POLL_SECONDS = 5
 TEST_POLL_ATTEMPTS = 12
 
 
-def _ride_entrance_exit_state(game: RCT2, ride_id: int) -> dict[str, bool]:
+def _ride_station_raw(game: RCT2, ride_id: int) -> dict[str, Any]:
     from openrct2_mcp.bridge_fast import get_ride_raw
 
     raw = get_ride_raw(game, ride_id) or {}
-    st = (raw.get("stations") or [{}])[0]
+    return (raw.get("stations") or [{}])[0]
+
+
+def _ride_entrance_exit_state(game: RCT2, ride_id: int) -> dict[str, bool]:
+    st = _ride_station_raw(game, ride_id)
     return {"entrance": st.get("entrance") is not None, "exit": st.get("exit") is not None}
+
+
+# Room a guest needs above a footpath (4 height units).
+_GUEST_HEADROOM_Z = 32
+_CARDINAL = ((1, 0), (-1, 0), (0, 1), (0, -1))
+
+
+def _guest_side_blocked(game: RCT2, guest_x: int, guest_y: int, z: int) -> bool:
+    """True when the tile guests step onto from an entrance/exit is occupied at path height.
+
+    Track, scenery or other rides overlapping path height there leave the entrance
+    unreachable.
+    """
+    raw = game._query("get_tile", {"x": guest_x, "y": guest_y})
+    for el in raw.get("elements", []):
+        if el.get("type") in ("surface", "footpath"):
+            continue
+        base = int(el.get("baseZ", 0))
+        top = int(el.get("clearanceZ", base))
+        if base < z + _GUEST_HEADROOM_Z and top > z:
+            return True
+    return False
+
+
+# Track this many tile-z units (8 baseZ each) above the station still blocks guests.
+_GUEST_HEADROOM_TILE_Z = _GUEST_HEADROOM_Z // 8
+
+
+def _design_layout(spec: dict[str, Any]) -> tuple[set[tuple[int, int]], set[tuple[int, int]]]:
+    """(all track tiles, low track tiles guests cannot walk under) for a placed spec.
+
+    Returns empty sets when the spec cannot be simulated (no enclosure checks).
+    """
+    try:
+        sim = simulate_design(spec)
+    except Exception:
+        return set(), set()
+    if not sim["states"]:
+        return set(), set()
+    base_by_index = {st["index"]: int(st["base_z"]) for st in sim["states"]}
+    station_z = int(sim["states"][0]["base_z"])
+    footprint = sim["footprint"]
+    low = {
+        tile
+        for tile, indices in footprint.items()
+        if any(
+            base_by_index.get(i, station_z) < station_z + _GUEST_HEADROOM_TILE_Z for i in indices
+        )
+    }
+    return set(footprint), low
+
+
+# Guest-side access levels, best first.
+ACCESS_OPEN = "open"  # walks out of the track bounding box without crossing any track
+ACCESS_TUNNEL = "tunnel"  # only reaches open ground by passing under high track
+ACCESS_ENCLOSED = "enclosed"  # boxed in by low track
+_ACCESS_RANK = {ACCESS_OPEN: 0, ACCESS_TUNNEL: 1, ACCESS_ENCLOSED: 2}
+
+
+def guest_tile_access(
+    guest: tuple[int, int],
+    track_tiles: set[tuple[int, int]],
+    low_track_tiles: set[tuple[int, int]],
+    *,
+    extra_blocked: set[tuple[int, int]] | frozenset = frozenset(),
+) -> dict[str, Any]:
+    """How guests at ``guest`` reach ground outside the ride's track bounding box.
+
+    Returns ``{"level": open|tunnel|enclosed, "under_track": [[x, y], ...]}``.
+    ``open`` never crosses a track tile; ``tunnel`` needs a path under the high
+    track tiles listed in ``under_track`` (as few as possible); ``enclosed``
+    cannot get out at all (e.g. the lane inside an out-and-back with a low
+    return leg).
+    """
+    if not track_tiles:
+        return {"level": ACCESS_OPEN, "under_track": []}
+    blocked = low_track_tiles | set(extra_blocked)
+    if guest in blocked:
+        return {"level": ACCESS_ENCLOSED, "under_track": []}
+    xs = [x for x, _ in track_tiles]
+    ys = [y for _, y in track_tiles]
+    x1, x2, y1, y2 = min(xs), max(xs), min(ys), max(ys)
+    # 0-1 BFS: stepping onto a high track tile costs 1, open ground costs 0.
+    cost = {guest: 1 if guest in track_tiles else 0}
+    parent: dict[tuple[int, int], tuple[int, int] | None] = {guest: None}
+    queue: deque[tuple[int, int]] = deque([guest])
+    while queue:
+        cur = queue.popleft()
+        cx, cy = cur
+        if not (x1 <= cx <= x2 and y1 <= cy <= y2):
+            under: list[list[int]] = []
+            node: tuple[int, int] | None = cur
+            while node is not None:
+                if node in track_tiles:
+                    under.append([node[0], node[1]])
+                node = parent[node]
+            under.reverse()
+            return {"level": ACCESS_TUNNEL if under else ACCESS_OPEN, "under_track": under}
+        for dx, dy in _CARDINAL:
+            nxt = (cx + dx, cy + dy)
+            if nxt in blocked:
+                continue
+            step = 1 if nxt in track_tiles else 0
+            new_cost = cost[cur] + step
+            if new_cost < cost.get(nxt, new_cost + 1):
+                cost[nxt] = new_cost
+                parent[nxt] = cur
+                if step:
+                    queue.append(nxt)
+                else:
+                    queue.appendleft(nxt)
+    return {"level": ACCESS_ENCLOSED, "under_track": []}
+
+
+def guest_tile_enclosed(
+    guest: tuple[int, int],
+    track_tiles: set[tuple[int, int]],
+    low_track_tiles: set[tuple[int, int]],
+    *,
+    extra_blocked: set[tuple[int, int]] | frozenset = frozenset(),
+) -> bool:
+    """True when guests cannot walk from ``guest`` out of the ride's own track area,
+    not even under high track (see guest_tile_access).
+    """
+    access = guest_tile_access(guest, track_tiles, low_track_tiles, extra_blocked=extra_blocked)
+    return access["level"] == ACCESS_ENCLOSED
+
+
+def _station_side_tiles(
+    station_world: list[tuple[int, int, int]],
+) -> list[tuple[int, int, int, int]]:
+    """(tile_x, tile_y, dx, dy) for each perpendicular neighbour of a station tile."""
+    station_tiles = {(x, y) for x, y, _ in station_world}
+    out = []
+    for sx, sy, sdir in station_world:
+        sides = ((1, 0), (-1, 0)) if sdir % 2 else ((0, 1), (0, -1))
+        for dx, dy in sides:
+            if (sx + dx, sy + dy) not in station_tiles:
+                out.append((sx + dx, sy + dy, dx, dy))
+    return out
+
+
+def _guest_tile_for(
+    pos: dict[str, Any], station_tiles: set[tuple[int, int]]
+) -> tuple[int, int, int, int] | None:
+    """(tile_x, tile_y, guest_x, guest_y) for an entrance/exit position dict."""
+    tx, ty = int(pos["x"]) // 32, int(pos["y"]) // 32
+    guest = next(
+        ((tx - dx, ty - dy) for dx, dy in _CARDINAL if (tx + dx, ty + dy) in station_tiles),
+        None,
+    )
+    if guest is None:
+        return None
+    return tx, ty, guest[0], guest[1]
+
+
+def _remove_blocked_entrance_exit(game: RCT2, ride_id: int, spec: dict[str, Any]) -> list[str]:
+    """Remove an auto-placed entrance/exit whose guest side is blocked; return what was removed.
+
+    The guest side is the neighbour opposite the station tile the entrance touches.
+    It counts as blocked when occupied at path height, when it is enclosed by the
+    ride's own low track (e.g. the lane inside an out-and-back), or when it only
+    reaches open ground under the track while another station side opens directly.
+    """
+    from pyrct2._generated.enums import RideStatus
+
+    station_world = _station_world_tiles(spec)
+    station_tiles = {(x, y) for x, y, _ in station_world}
+    track_tiles, low_tiles = _design_layout(spec)
+    st = _ride_station_raw(game, ride_id)
+    # Tiles already holding this ride's entrance or exit are not free sides.
+    occupied = {
+        (int(pos["x"]) // 32, int(pos["y"]) // 32)
+        for pos in (st.get("entrance"), st.get("exit"))
+        if pos is not None
+    }
+    open_side_cache: list[bool] = []
+
+    def has_open_side(z: int) -> bool:
+        """True when a free station side walks straight out (checked once, lazily)."""
+        if not open_side_cache:
+            open_side_cache.append(
+                any(
+                    (tx, ty) not in occupied
+                    and guest_tile_access(
+                        (tx + dx, ty + dy), track_tiles, low_tiles, extra_blocked=station_tiles
+                    )["level"]
+                    == ACCESS_OPEN
+                    and not _guest_side_blocked(game, tx + dx, ty + dy, z)
+                    for tx, ty, dx, dy in _station_side_tiles(station_world)
+                )
+            )
+        return open_side_cache[0]
+
+    removed: list[str] = []
+    for key, is_exit in (("entrance", False), ("exit", True)):
+        pos = st.get(key)
+        if pos is None:
+            continue
+        found = _guest_tile_for(pos, station_tiles)
+        if found is None:
+            continue
+        tx, ty, gx, gy = found
+        level = guest_tile_access(
+            (gx, gy), track_tiles, low_tiles, extra_blocked=station_tiles
+        )["level"]
+        if _guest_side_blocked(game, gx, gy, int(pos["z"])):
+            reason = "guest side blocked"
+        elif level == ACCESS_ENCLOSED:
+            reason = "guest side enclosed by the ride's own track"
+        elif level == ACCESS_TUNNEL and has_open_side(int(pos["z"])):
+            reason = "guest side only reachable under the track; an open station side exists"
+        else:
+            continue
+        if not removed:
+            game.actions.ride_set_status(ride=ride_id, status=RideStatus.CLOSED)
+        game.actions.ride_entrance_exit_remove(
+            x=tx * 32, y=ty * 32, ride=ride_id, station=0, is_exit=is_exit
+        )
+        removed.append(f"{key} at ({tx},{ty}): {reason}")
+    return removed
+
+
+# Direction an entrance/exit must store to face the station tile at this offset
+# (0 = -x, 1 = +y, 2 = +x, 3 = -y). Facing away leaves the queue unlinked.
+_FACING_STATION = {(-1, 0): 0, (0, 1): 1, (1, 0): 2, (0, -1): 3}
+
+
+def expected_facing(tile: tuple[int, int], station_tiles: set[tuple[int, int]]) -> int | None:
+    """Direction for an entrance/exit at ``tile`` to face its neighbouring station tile."""
+    tx, ty = tile
+    for (dx, dy), direction in _FACING_STATION.items():
+        if (tx + dx, ty + dy) in station_tiles:
+            return direction
+    return None
+
+
+def _fix_entrance_facing(game: RCT2, ride_id: int, spec: dict[str, Any]) -> list[str]:
+    """Re-place entrances/exits that face away from the station; return what was fixed.
+
+    An older ride-builder plugin placed north/south-side entrances backwards, which
+    leaves the queue unconnected and the ride with no riders.
+    """
+    from pyrct2._generated.enums import RideStatus
+
+    station_tiles = {(x, y) for x, y, _ in _station_world_tiles(spec)}
+    st = _ride_station_raw(game, ride_id)
+    fixed: list[str] = []
+    for key, is_exit in (("entrance", False), ("exit", True)):
+        pos = st.get(key)
+        if pos is None or pos.get("direction") is None:
+            continue
+        tile = (int(pos["x"]) // 32, int(pos["y"]) // 32)
+        want = expected_facing(tile, station_tiles)
+        if want is None or int(pos["direction"]) == want:
+            continue
+        if not fixed:
+            game.actions.ride_set_status(ride=ride_id, status=RideStatus.CLOSED)
+        game.actions.ride_entrance_exit_remove(
+            x=tile[0] * 32, y=tile[1] * 32, ride=ride_id, station=0, is_exit=is_exit
+        )
+        game.actions.ride_entrance_exit_place(
+            x=tile[0] * 32, y=tile[1] * 32, direction=want, ride=ride_id, station=0, is_exit=is_exit
+        )
+        fixed.append(f"{key} at {tile} turned to face the station (direction {want})")
+    return fixed
+
+
+def _enclosure_warnings(game: RCT2, ride_id: int, spec: dict[str, Any]) -> list[str]:
+    """Warn for each entrance/exit whose guest side cannot reach open ground directly."""
+    try:
+        station_tiles = {(x, y) for x, y, _ in _station_world_tiles(spec)}
+        track_tiles, low_tiles = _design_layout(spec)
+        st = _ride_station_raw(game, ride_id)
+    except Exception:
+        return []
+    warnings: list[str] = []
+    for key in ("entrance", "exit"):
+        pos = st.get(key)
+        found = _guest_tile_for(pos, station_tiles) if pos else None
+        if found is None:
+            continue
+        tx, ty, gx, gy = found
+        access = guest_tile_access((gx, gy), track_tiles, low_tiles, extra_blocked=station_tiles)
+        if access["level"] == ACCESS_TUNNEL:
+            tiles = ", ".join(f"({x},{y})" for x, y in access["under_track"])
+            warnings.append(
+                f"{key} at ({tx},{ty}) opens onto ({gx},{gy}) inside the ride's track; "
+                f"a footpath must be routed under the track at {tiles} to reach it"
+            )
+        elif access["level"] == ACCESS_ENCLOSED:
+            warnings.append(
+                f"{key} at ({tx},{ty}) opens onto ({gx},{gy}), which is enclosed by the ride's "
+                "own track; guests can only reach it via a tunnel or bridge path"
+            )
+    return warnings
 
 
 def _station_world_tiles(spec: dict[str, Any]) -> list[tuple[int, int, int]]:
@@ -49,47 +350,84 @@ def ensure_entrance_exit(
     """Verify entrance+exit exist; fall back to manual placement beside station pieces.
 
     placeRideDesign's automatic placement can fail silently (e.g. one station side
-    fully covered by existing footpaths) which leaves the ride stuck closed.
+    fully covered by existing footpaths) which leaves the ride stuck closed. It can
+    also put an entrance where low track blocks the guest side; those are moved.
     """
+    try:
+        turned = _fix_entrance_facing(game, ride_id, spec)
+    except Exception as exc:
+        turned = [f"facing check failed: {exc}"]
+    relocated = _remove_blocked_entrance_exit(game, ride_id, spec)
     state = _ride_entrance_exit_state(game, ride_id)
     if state["entrance"] and state["exit"]:
-        return {"ok": True, **state, "method": "auto"}
+        return {
+            "ok": True,
+            **state,
+            "method": "auto",
+            "facing_fixes": turned,
+            "warnings": _enclosure_warnings(game, ride_id, spec),
+        }
 
-    try:
-        ride_builder.call("placeEntranceExit", {"rideId": ride_id})
-        state = _ride_entrance_exit_state(game, ride_id)
-        if state["entrance"] and state["exit"]:
-            return {"ok": True, **state, "method": "plugin_retry"}
-    except Exception:
-        pass
+    if not relocated:
+        # The plugin picks the same sides again, so skip it when relocating.
+        try:
+            ride_builder.call("placeEntranceExit", {"rideId": ride_id})
+            state = _ride_entrance_exit_state(game, ride_id)
+            if state["entrance"] and state["exit"]:
+                return {
+                    "ok": True,
+                    **state,
+                    "method": "plugin_retry",
+                    "warnings": _enclosure_warnings(game, ride_id, spec),
+                }
+        except Exception:
+            pass
 
-    # Manual fallback: try perpendicular neighbours of each station tile.
-    placed_notes: list[str] = []
-    for missing, is_exit in (("entrance", False), ("exit", True)):
+    # Manual fallback: try perpendicular neighbours of each station tile. The first
+    # pass only takes sides whose guest tile walks straight out of the track area;
+    # the second accepts sides that need a path under the track; the last accepts
+    # enclosed sides (with a warning) rather than leave the ride unable to open.
+    placed_notes: list[str] = list(relocated)
+    station_world = _station_world_tiles(spec)
+    station_tiles = {(x, y) for x, y, _ in station_world}
+    track_tiles, low_tiles = _design_layout(spec)
+    side_rank = {
+        (tx, ty): _ACCESS_RANK[
+            guest_tile_access(
+                (tx + dx, ty + dy), track_tiles, low_tiles, extra_blocked=station_tiles
+            )["level"]
+        ]
+        for tx, ty, dx, dy in _station_side_tiles(station_world)
+    }
+    for missing, is_exit, max_rank in (
+        ("entrance", False, 0),
+        ("exit", True, 0),
+        ("entrance", False, 1),
+        ("exit", True, 1),
+        ("entrance", False, 2),
+        ("exit", True, 2),
+    ):
         state = _ride_entrance_exit_state(game, ride_id)
         if state[missing]:
             continue
-        done = False
-        for sx, sy, sdir in _station_world_tiles(spec):
-            if done:
+        for tx, ty, dx, dy in _station_side_tiles(station_world):
+            if side_rank[(tx, ty)] > max_rank:
+                continue
+            # The entrance faces the station: 0 = -x, 1 = +y, 2 = +x, 3 = -y.
+            # (pyrct2's N/S flip compensates for its own swapped y deltas.)
+            direction = {(1, 0): 0, (-1, 0): 2, (0, 1): 3, (0, -1): 1}[(dx, dy)]
+            station_z = int(spec["origin"]["z"]) * 8
+            if _guest_side_blocked(game, tx + dx, ty + dy, station_z):
+                continue
+            try:
+                game.actions.ride_entrance_exit_place(
+                    x=tx * 32, y=ty * 32, direction=direction,
+                    ride=ride_id, station=0, is_exit=is_exit,
+                )
+                placed_notes.append(f"{missing} at ({tx},{ty})")
                 break
-            sides = ((1, 0, 0), (-1, 0, 2)) if sdir % 2 else ((0, 1, 3), (0, -1, 1))
-            for dx, dy, _facing in sides:
-                tx, ty = sx + dx, sy + dy
-                # Direction convention from pyrct2 _entrance_direction: toward-ride
-                # for E/W neighbours uses the same direction, N/S uses the opposite.
-                toward = {(1, 0): 0, (-1, 0): 2, (0, 1): 3, (0, -1): 1}[(dx, dy)]
-                direction = toward if toward % 2 == 0 else (toward + 2) % 4
-                try:
-                    game.actions.ride_entrance_exit_place(
-                        x=tx * 32, y=ty * 32, direction=direction,
-                        ride=ride_id, station=0, is_exit=is_exit,
-                    )
-                    placed_notes.append(f"{missing} at ({tx},{ty})")
-                    done = True
-                    break
-                except Exception:
-                    continue
+            except Exception:
+                continue
 
     state = _ride_entrance_exit_state(game, ride_id)
     return {
@@ -97,6 +435,7 @@ def ensure_entrance_exit(
         **state,
         "method": "manual_fallback",
         "placed": placed_notes,
+        "warnings": _enclosure_warnings(game, ride_id, spec),
     }
 
 
@@ -384,7 +723,8 @@ def fit_coaster_design(
         "placement": placement,
         "entrance_exit": entrance_exit,
         "stats": stats,
-        "warnings": lint["warnings"],
+        "warnings": lint["warnings"]
+        + [{"rule": "entrance_enclosed", "detail": w} for w in entrance_exit.get("warnings", [])],
         "lint_stats": lint["stats"],
         "saved": saved,
         "timings": {**timings, "total_ms": int((time.monotonic() - t0) * 1000)},

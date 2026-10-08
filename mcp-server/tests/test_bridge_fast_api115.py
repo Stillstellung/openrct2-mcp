@@ -20,6 +20,11 @@ class MergeRideBuilderMaintenanceTests(unittest.TestCase):
         self.assertEqual(merged["queue_time"], 12)
         self.assertEqual(merged["station_queue_times"][0]["queueTime"], 12)
 
+    def test_drops_empty_station_slots(self):
+        row = {"stationQueueTimes": [{"index": i, "queueTime": 0} for i in range(255)]}
+        merged = merge_ride_builder_maintenance({"id": 4}, row)
+        self.assertNotIn("station_queue_times", merged)
+
     def test_keeps_bridge_values_when_present(self):
         summary = {"id": 1, "reliability": 90.0}
         row = {"reliability": 50.0}

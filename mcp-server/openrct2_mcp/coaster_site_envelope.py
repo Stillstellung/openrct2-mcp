@@ -14,7 +14,7 @@ from typing import Any
 from pyrct2.client import RCT2
 from pyrct2.world._tile import Tile
 
-ENVELOPE_VERSION = 1
+ENVELOPE_VERSION = 2
 
 # 18x18 chunks (~324 tiles) are reliably fast on busy parks; larger requests
 # (900+) intermittently stall the bridge.
@@ -23,7 +23,8 @@ ENVELOPE_TILE_CHUNK = 18
 MAX_RADIUS = 30
 # Practical RCT2 support ceiling above ground for most coaster types (tile_z units).
 HEIGHT_BUDGET_TILE_Z = 28
-OBSTACLE_COORD_CAP = 120
+# obstacle_tops rise rows: height above ground per tile, one base-36 char.
+_RISE_DIGITS = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 _ENVELOPE_CACHE: dict[str, Any] = {"key": None, "result": None, "ts": 0.0}
 _ENVELOPE_CACHE_TTL_SEC = 45.0
@@ -164,7 +165,7 @@ def build_site_envelope(
     ground_z: dict[tuple[int, int], int] = {}
     kind_grid: dict[tuple[int, int], str] = {}
     clear_flat: dict[tuple[int, int], int] = {}
-    obstacle_tops: list[list[int]] = []
+    obstacle_top: dict[tuple[int, int], int] = {}
     counts: Counter[str] = Counter()
 
     for (tx, ty), tile in tile_map.items():
@@ -199,14 +200,14 @@ def build_site_envelope(
         counts[name] += 1
         if sym == ".":
             clear_flat[(tx, ty)] = tz
-        elif sym in ("T", "P", "s", "~") and len(obstacle_tops) < OBSTACLE_COORD_CAP * 5:
+        elif sym in ("T", "P", "s", "~"):
             # top_z (tile_z units): track may pass above this height on supports.
             top = int(surf.waterHeight) // 8 if sym == "~" else tz
             for e in tile.elements:
                 cz = getattr(e, "clearanceZ", None)
                 if cz:
                     top = max(top, int(cz) // 8)
-            obstacle_tops.append([tx, ty, top])
+            obstacle_top[(tx, ty)] = top
 
     z_counter = Counter(clear_flat.values())
     dominant_z = z_counter.most_common(1)[0][0] if z_counter else (
@@ -218,6 +219,7 @@ def build_site_envelope(
     for y in range(y1, y2 + 1):
         rle_rows.append(_rle_row([ground_z.get((x, y), -1) for x in range(x1, x2 + 1)]))
         kind_rows.append("".join(kind_grid.get((x, y), "X") for x in range(x1, x2 + 1)))
+    rise_rows, rise_overflow = encode_obstacle_rise_rows(obstacle_top, ground_z, bbox)
 
     rects = _clear_rects(clear_flat, bbox)
     station = _suggest_station(clear_flat, bbox)
@@ -249,14 +251,14 @@ def build_site_envelope(
         ),
         "tile_counts": dict(counts),
         "obstacle_tops": {
-            "tiles": obstacle_tops,
-            "legend": "[x,y,top_z] for T/P/s/~ tiles — track base z must be > top_z to pass over",
-            "truncated": (
-                counts.get("track", 0)
-                + counts.get("paths", 0)
-                + counts.get("scenery", 0)
-                + counts.get("water", 0)
-            ) > len(obstacle_tops),
+            "rise_rows": rise_rows,
+            "overflow": rise_overflow,
+            "legend": (
+                "rows y1->y2, columns x1->x2 like kind_rows: '.' no obstacle, else the "
+                "obstacle's height above ground in base 36 (0-9 then a-z), so "
+                "top_z = ground tile_z + rise; '^' means see overflow [x,y,top_z]. "
+                "Track base z must be > top_z to pass over."
+            ),
         },
         "clear_rects": rects,
         "suggested_station": station,
@@ -273,6 +275,56 @@ def build_site_envelope(
     _ENVELOPE_CACHE["result"] = result
     _ENVELOPE_CACHE["ts"] = time.monotonic()
     return result
+
+
+def encode_obstacle_rise_rows(
+    tops: dict[tuple[int, int], int],
+    ground: dict[tuple[int, int], int],
+    bbox: tuple[int, int, int, int] | list[int],
+) -> tuple[list[str], list[list[int]]]:
+    """One string per row: obstacle top_z minus ground as a base-36 char, '.' for none.
+
+    Rises outside 0..35 are written as '^' and listed in the overflow as [x, y, top_z].
+    """
+    x1, y1, x2, y2 = (int(v) for v in bbox)
+    rows: list[str] = []
+    overflow: list[list[int]] = []
+    for y in range(y1, y2 + 1):
+        chars: list[str] = []
+        for x in range(x1, x2 + 1):
+            top = tops.get((x, y))
+            if top is None:
+                chars.append(".")
+                continue
+            rise = top - ground.get((x, y), 0)
+            if 0 <= rise < len(_RISE_DIGITS):
+                chars.append(_RISE_DIGITS[rise])
+            else:
+                chars.append("^")
+                overflow.append([x, y, top])
+        rows.append("".join(chars))
+    return rows, overflow
+
+
+def envelope_obstacle_tops(envelope: dict[str, Any]) -> dict[tuple[int, int], int]:
+    """tile -> top_z from an envelope's obstacle_tops (rise rows or legacy [x,y,top_z] tiles)."""
+    info = envelope.get("obstacle_tops") or {}
+    tops: dict[tuple[int, int], int] = {}
+    for row in info.get("tiles") or []:
+        tops[(int(row[0]), int(row[1]))] = int(row[2])
+    rise_rows = info.get("rise_rows")
+    if rise_rows:
+        x1, y1, _x2, _y2 = (int(v) for v in envelope.get("bbox", [0, 0, 0, 0]))
+        ground = envelope_ground_map(envelope)
+        for ry, row in enumerate(rise_rows):
+            for rx, ch in enumerate(row):
+                idx = _RISE_DIGITS.find(ch)
+                if idx >= 0:
+                    tile = (x1 + rx, y1 + ry)
+                    tops[tile] = ground.get(tile, 0) + idx
+        for row in info.get("overflow") or []:
+            tops[(int(row[0]), int(row[1]))] = int(row[2])
+    return tops
 
 
 def envelope_kind_map(envelope: dict[str, Any]) -> dict[tuple[int, int], str]:
@@ -304,10 +356,7 @@ def envelope_obstacle_tiles(envelope: dict[str, Any]) -> dict[tuple[int, int], i
     Derived from the complete kind rows (no cap distortion); fly-over heights come
     from obstacle_tops where known, else a conservative ground + 4 estimate.
     """
-    tops: dict[tuple[int, int], int] = {}
-    for row in (envelope.get("obstacle_tops") or {}).get("tiles") or []:
-        tops[(int(row[0]), int(row[1]))] = int(row[2])
-
+    tops = envelope_obstacle_tops(envelope)
     ground = envelope_ground_map(envelope)
     blocked: dict[tuple[int, int], int | None] = {}
     for tile, sym in envelope_kind_map(envelope).items():

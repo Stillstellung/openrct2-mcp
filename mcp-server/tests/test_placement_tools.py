@@ -149,20 +149,163 @@ class WalkablePathZTests(unittest.TestCase):
 
 
 class FindStallSitesTests(unittest.TestCase):
+    def _game(self, path_tiles):
+        game = MagicMock()
+        game.world.get_elements_by_type.side_effect = lambda kind: (
+            [{"tileX": x, "tileY": y} for x, y in path_tiles] if kind == "footpath" else []
+        )
+        game.world.get_tile.return_value = MagicMock(surface=MagicMock(slope=0))
+        return game
+
+    @patch("openrct2_mcp.path_connectivity.get_park_entrance_tiles", return_value=[(60, 20)])
     @patch("openrct2_mcp.placement_tools.validate_stall_site", return_value=112)
     @patch("openrct2_mcp.placement_tools.walkable_guest_path_z", return_value=112)
-    @patch("openrct2_mcp.placement_tools.assert_tile_adjacent_to_entrance_network", return_value=True)
     @patch("openrct2_mcp.placement_tools.is_guest_footpath_tile", return_value=True)
-    @patch("openrct2_mcp.map_region.get_path_graph")
-    def test_collects_valid_sites(self, mock_graph, *_mocks):
-        mock_graph.return_value = {"nodes": [{"x": 60, "y": 23, "degree": 4}]}
-        game = MagicMock()
-        game.world.get_tile.return_value = MagicMock(surface=MagicMock(slope=0))
-
+    def test_collects_valid_sites(self, *_mocks):
+        game = self._game([(60, 21), (60, 22), (60, 23)])
         sites = find_stall_sites(game, near_x=60, near_y=23, max_results=2)
-        self.assertTrue(sites)
+        self.assertEqual(len(sites), 2)
         self.assertIn("stall", sites[0])
         self.assertIn("path", sites[0])
+        self.assertEqual(sites[0]["path_base_z"], 112)
+
+    @patch("openrct2_mcp.path_connectivity.get_park_entrance_tiles", return_value=[(51, 30)])
+    @patch("openrct2_mcp.placement_tools.validate_stall_site", return_value=112)
+    @patch("openrct2_mcp.placement_tools.walkable_guest_path_z", return_value=112)
+    @patch("openrct2_mcp.placement_tools.is_guest_footpath_tile", return_value=True)
+    def test_straight_path_tiles_are_stall_fronts(self, *_mocks):
+        # A straight N-S walkway: every middle tile has degree 2.
+        game = self._game([(51, y) for y in range(31, 59)])
+        sites = find_stall_sites(game, near_x=52, near_y=45, max_results=4)
+        self.assertEqual(len(sites), 4)
+        for site in sites:
+            self.assertEqual(site["degree"], 2)
+            self.assertIn(site["stall"][0], (50, 52))
+        self.assertEqual(sites[0]["stall"], [52, 45])
+
+    @patch("openrct2_mcp.path_connectivity.get_park_entrance_tiles", return_value=[(51, 30)])
+    @patch("openrct2_mcp.placement_tools.is_guest_footpath_tile", return_value=True)
+    @patch("openrct2_mcp.placement_tools.walkable_guest_path_z", return_value=112)
+    def test_skips_invalid_pads(self, *_mocks):
+        game = self._game([(51, 31), (51, 32)])
+
+        def validate(_game, sx, sy, px, py, **_kw):
+            if sx == 52:
+                raise ValueError("blocked")
+            return 112
+
+        with patch("openrct2_mcp.placement_tools.validate_stall_site", side_effect=validate):
+            sites = find_stall_sites(game, max_results=10)
+        self.assertTrue(sites)
+        self.assertTrue(all(site["stall"][0] != 52 for site in sites))
+
+
+class FlatRideAccessTests(unittest.TestCase):
+    def test_entrance_faces_nearest_path_outside_footprint(self):
+        from openrct2_mcp.placement_tools import plan_flat_ride_access
+
+        footprint = [(x, y) for x in range(9, 12) for y in range(9, 12)]  # 3x3 around (10,10)
+        access = plan_flat_ride_access(footprint, {(15, 10)})
+        self.assertNotIn(tuple(access["entrance"]), set(footprint))
+        self.assertNotIn(tuple(access["exit"]), set(footprint))
+        self.assertEqual(access["entrance"][0], 12)  # east side, toward the path
+        self.assertEqual(access["entrance_front"][0], 13)
+        self.assertNotEqual(access["entrance"], access["exit"])
+        dist = abs(access["entrance"][0] - access["exit"][0]) + abs(access["entrance"][1] - access["exit"][1])
+        self.assertGreater(dist, 1)
+
+    def test_front_ok_rejects_blocked_sides(self):
+        from openrct2_mcp.placement_tools import plan_flat_ride_access
+
+        footprint = [(x, y) for x in range(9, 12) for y in range(9, 12)]
+        # The east side fronts (x=13) sit inside another ride's footprint.
+        access = plan_flat_ride_access(footprint, {(15, 10)}, lambda t: t[0] != 13)
+        self.assertNotEqual(access["entrance_front"][0], 13)
+        self.assertNotEqual(access["exit_front"][0], 13)
+
+    def test_raises_when_fewer_than_two_free_fronts(self):
+        from openrct2_mcp.placement_tools import plan_flat_ride_access
+
+        footprint = [(x, y) for x in range(9, 12) for y in range(9, 12)]
+        with self.assertRaises(ValueError):
+            plan_flat_ride_access(footprint, {(15, 10)}, lambda t: t == (13, 10))
+
+
+def _elem(kind, base_z=112, **extra):
+    return MagicMock(type=kind, baseZ=base_z, isQueue=extra.get("isQueue", False))
+
+
+def _tile_data(elements, *, base_z=112, owned=True):
+    surface = MagicMock(baseZ=base_z, slope=0, hasOwnership=owned)
+    return MagicMock(surface=surface, elements=[_elem("surface", base_z), *elements])
+
+
+class FrontTileClearTests(unittest.TestCase):
+    def _game(self, td):
+        game = MagicMock()
+        game.world.get_tile.return_value = td
+        return game
+
+    def test_open_owned_level_land_is_clear(self):
+        from openrct2_mcp.placement_tools import front_tile_clear
+
+        self.assertTrue(front_tile_clear(self._game(_tile_data([])), (1, 1), 112))
+
+    def test_other_ride_track_blocks(self):
+        from openrct2_mcp.placement_tools import front_tile_clear
+
+        self.assertFalse(front_tile_clear(self._game(_tile_data([_elem("track")])), (1, 1), 112))
+
+    def test_scenery_unowned_and_height_block(self):
+        from openrct2_mcp.placement_tools import front_tile_clear
+
+        self.assertFalse(
+            front_tile_clear(self._game(_tile_data([_elem("small_scenery")])), (1, 1), 112)
+        )
+        self.assertFalse(front_tile_clear(self._game(_tile_data([], owned=False)), (1, 1), 112))
+        self.assertFalse(front_tile_clear(self._game(_tile_data([], base_z=160)), (1, 1), 112))
+
+    def test_existing_guest_path_is_clear_but_queue_is_not(self):
+        from openrct2_mcp.placement_tools import front_tile_clear
+
+        self.assertTrue(front_tile_clear(self._game(_tile_data([_elem("footpath")])), (1, 1), 112))
+        queue = _elem("footpath", isQueue=True)
+        self.assertFalse(front_tile_clear(self._game(_tile_data([queue])), (1, 1), 112))
+
+
+class PlaceFlatRideBestTileTests(unittest.TestCase):
+    @patch("openrct2_mcp.path_connectivity.get_park_entrance_tiles", return_value=[])
+    @patch("openrct2_mcp.path_connectivity.collect_path_tiles", return_value={(60, 52)})
+    def test_skips_site_whose_fronts_are_inside_another_ride(self, *_mocks):
+        from openrct2_mcp import placement_tools
+
+        # Site A (footprint 47..49 x 49..51) is boxed in by a ferris wheel on every side;
+        # site B is open.
+        ferris = {(x, y) for x in range(44, 53) for y in range(46, 55)} - {
+            (x, y) for x in range(46, 51) for y in range(48, 53)
+        }
+
+        def get_tile(tile):
+            return _tile_data([_elem("track")] if (tile.x, tile.y) in ferris else [])
+
+        game = MagicMock()
+        game.world.get_tile.side_effect = get_tile
+        game.rides.get_footprint.return_value = [
+            MagicMock(x=x, y=y) for x in range(-1, 2) for y in range(-1, 2)
+        ]
+        game.rides.place_flat_ride.return_value = MagicMock()
+        land = {
+            "best": {"origin": [46, 48]},
+            "candidates": [{"origin": [46, 48]}, {"origin": [70, 48]}],
+        }
+        with patch.object(placement_tools, "find_open_land", return_value=land):
+            result = placement_tools.place_ride_at_best_tile(
+                game, MagicMock(), is_stall=False, connect_paths=False
+            )
+        self.assertEqual(result["rejected_sites"], [[46, 48]])
+        self.assertEqual(result["tile"], [72, 50])
+        for key in ("entrance_front", "exit_front"):
+            self.assertNotIn(tuple(result[key]), ferris)
 
 
 if __name__ == "__main__":

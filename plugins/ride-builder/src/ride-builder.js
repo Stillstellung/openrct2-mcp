@@ -126,6 +126,7 @@ function main() {
         ["testRide",             params => handleStartRideTest(params)],
         ["getRideStats",         params => handleGetRideStats(params)],
         ["getRideMaintenance",   params => handleGetRideMaintenance(params)],
+        ["getRideTrains",        params => handleGetRideTrains(params)],
         ["listRideMaintenance",  () => handleListRideMaintenance()],
         ["getGameSpeed",         () => handleGetGameSpeed()],
         ["getElementsInRect",    params => handleGetElementsInRect(params)],
@@ -213,7 +214,8 @@ function main() {
         let queueTime = null;
         for (let i = 0; i < stations.length; i++) {
             const st = stations[i];
-            if (!st || typeof st.queueTime !== "number") continue;
+            // ride.stations lists every station slot (255), so skip unused ones.
+            if (!st || !st.start || typeof st.queueTime !== "number") continue;
             stationQueueTimes.push({ index: i, queueTime: st.queueTime });
             queueTime = queueTime == null ? st.queueTime : Math.max(queueTime, st.queueTime);
         }
@@ -350,7 +352,10 @@ function main() {
             name: guest.name,
             happiness: guest.happiness,
             tile: [Math.floor(guest.x / 32), Math.floor(guest.y / 32)],
-            thoughts: (guest.thoughts || []).slice(0, 5),
+            // Native thought objects serialize to {}, so copy their fields.
+            thoughts: (guest.thoughts || []).slice(0, 5).map(t => ({
+                type: t.type, item: t.item, freshness: t.freshness, freshTimeout: t.freshTimeout,
+            })),
         };
     }
 
@@ -434,6 +439,34 @@ function main() {
             excitement: ride.excitement / 100,
             intensity: ride.intensity / 100,
             nausea: ride.nausea / 100,
+        };
+    }
+
+    // Trains only exist while a ride is open or testing; a closed ride reports 0.
+    async function handleGetRideTrains(params) {
+        const { rideId } = params || {};
+        if (typeof rideId !== "number") throw new Error("Missing or invalid parameter: rideId");
+        const ride = map.getRide(rideId);
+        if (!ride) throw new Error("Ride not found");
+        const carsPerTrain = [];
+        (ride.vehicles || []).forEach(headId => {
+            if (headId === 65535 || headId == null) return;
+            let cars = 0;
+            let id = headId;
+            while (id != null && cars < 64) {
+                const car = map.getEntity(id);
+                if (!car) break;
+                cars++;
+                id = car.nextCarOnTrain;
+            }
+            carsPerTrain.push(cars);
+        });
+        return {
+            rideId,
+            status: ride.status,
+            mode: ride.mode,
+            trains: carsPerTrain.length,
+            carsPerTrain,
         };
     }
 
@@ -1246,13 +1279,15 @@ function main() {
         return stationPieces;
     }
 
+    // Entrance/exit direction points toward the station (0 = -x, 1 = +y, 2 = +x, 3 = -y);
+    // facing away leaves the footpath unlinked and the queue without a banner.
     function entranceExitPositionsFor(stationTile) {
         const dir = stationTile.direction;
         if (dir === 0 || dir === 2) {
             // Track runs east-west, place perpendicular north-south
             return {
-                entrance: { x: stationTile.x, y: stationTile.y - 1, direction: 3 },
-                exit:     { x: stationTile.x, y: stationTile.y + 1, direction: 1 },
+                entrance: { x: stationTile.x, y: stationTile.y - 1, direction: 1 },
+                exit:     { x: stationTile.x, y: stationTile.y + 1, direction: 3 },
             };
         }
         // Track runs north-south, place perpendicular east-west

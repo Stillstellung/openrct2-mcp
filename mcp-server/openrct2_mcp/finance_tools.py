@@ -28,6 +28,24 @@ def get_finance_summary(game: RCT2) -> dict[str, Any]:
     }
 
 
+def set_loan(game: RCT2, amount: int) -> dict[str, Any]:
+    """Set the bank loan to amount (money units, $1 = 10), clamped to [0, max_loan].
+
+    The game only accepts multiples of $1,000 and refuses repayments the park can't cover.
+    """
+    max_loan = game.state.park_max_bank_loan()
+    target = max(0, min(int(amount), max_loan))
+    target -= target % 10000
+    before = game.state.park_bank_loan()
+    game.actions.park_set_loan(value=target)
+    return {
+        "loan_before": before,
+        "loan": game.state.park_bank_loan(),
+        "max_loan": max_loan,
+        "cash": game.state.park_cash(),
+    }
+
+
 def scenario_progress(game: RCT2) -> dict[str, Any]:
     scenario = game.state.scenario()
     awards = [a.model_dump() for a in game.state.park_awards()]
@@ -295,13 +313,32 @@ def set_research_funding(game: RCT2, level: str) -> dict:
 
 
 def set_research_priorities(game: RCT2, categories: list[str]) -> dict:
-    cats = [ResearchCategory(c.lower()) for c in categories]
-    game.park.research.set_priorities(cats)
-    return {"priorities": categories}
+    """Enable exactly the given research categories, keeping the funding level.
+
+    OpenRCT2 has no research ordering: ParkSetResearchFundingAction takes a bitmask
+    of enabled categories, so list order is ignored. Returns the game's state read back.
+    """
+    try:
+        cats = list(dict.fromkeys(ResearchCategory(str(c).strip().lower()) for c in categories))
+    except ValueError as exc:
+        valid = ", ".join(c.value for c in ResearchCategory)
+        raise ValueError(f"Unknown research category ({exc}); valid: {valid}") from exc
+    if not cats:
+        raise ValueError("At least one research category must be enabled.")
+    research = game.park.research
+    research.set_priorities(cats)
+    enabled = [c.value for c in research.priorities]
+    return {
+        "enabled_categories": enabled,
+        "disabled_categories": [c.value for c in ResearchCategory if c.value not in enabled],
+        "funding": research.funding.name,
+        "applied": set(enabled) == {c.value for c in cats},
+        "note": "OpenRCT2 only enables/disables categories; there is no priority order.",
+    }
 
 
 def fund_research(game: RCT2, level: str = "NORMAL", categories: list[str] | None = None) -> dict:
     if categories:
-        set_research_priorities(game, categories)
-        return {**set_research_funding(game, level), "priorities": categories}
+        funding = set_research_funding(game, level)
+        return {**set_research_priorities(game, categories), **funding}
     return set_research_funding(game, level)

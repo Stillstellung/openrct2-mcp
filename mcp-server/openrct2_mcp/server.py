@@ -80,6 +80,7 @@ from openrct2_mcp.finance_tools import (
     get_finance_summary,
     optimize_park_pricing_from_guest_feedback,
     scenario_progress,
+    set_loan,
     set_research_funding,
     set_research_priorities,
     start_marketing_campaign,
@@ -100,6 +101,7 @@ from openrct2_mcp.ride_ops import (
     list_refurbish_candidates,
     optimize_ride_throughput,
     refurbish_ride,
+    replace_track_piece,
     set_cars_per_train,
     set_num_trains,
     set_ride_colour_scheme,
@@ -149,6 +151,7 @@ from openrct2_mcp.staff_tools import (
 )
 from openrct2_mcp.vision import VisionCaptureError, capture_game_image
 from pyrct2._generated.enums import Direction, GameSpeed, RideStatus, StaffType
+from pyrct2.client import RCT2
 from pyrct2.objects import FootpathAdditions, RideObjects
 from pyrct2.world._tile import Tile
 
@@ -237,10 +240,26 @@ def openrct2_status() -> str:
                     ),
                     "ride_builder_port": ride_builder.port,
                     "ride_builder": rb_health,
+                    "ride_builder_install": _ride_builder_install_state(),
                 }
             )
     except (ConnectionError, OSError) as exc:
-        return _json({"connected": False, "error": str(exc)})
+        return _json(
+            {
+                "connected": False,
+                "error": str(exc),
+                "ride_builder_install": _ride_builder_install_state(),
+            }
+        )
+
+
+def _ride_builder_install_state() -> dict:
+    from openrct2_mcp.install import ride_builder_install_state
+
+    try:
+        return ride_builder_install_state()
+    except OSError as exc:
+        return {"up_to_date": None, "error": str(exc)}
 
 
 @mcp.tool()
@@ -258,12 +277,16 @@ def list_rides() -> str:
 
 
 @mcp.tool()
-def get_park_messages() -> str:
-    """Get guest complaints, awards, and other park messages useful for optimization."""
+def get_park_messages(limit: int = 30) -> str:
+    """Most recent park messages (newest first, archived included, format codes stripped) and awards."""
+    from openrct2_mcp.park_health import recent_park_messages
+
     with game_context() as game:
+        messages = [m.model_dump() for m in game.state.park_messages()]
         return _json(
             {
-                "messages": [m.model_dump() for m in game.state.park_messages()],
+                "total_messages": len(messages),
+                "messages": recent_park_messages(messages, max(1, limit)),
                 "awards": [a.model_dump() for a in game.state.park_awards()],
             }
         )
@@ -332,7 +355,7 @@ def place_flat_ride(
     """Place a flat ride (e.g. MERRY_GO_ROUND) with entrance and exit tiles."""
     with game_context() as game:
         ensure_paused(game)
-        obj = _resolve_ride_object(ride_object)
+        obj = _resolve_ride_object(ride_object, game)
         ride = game.rides.place_flat_ride(
             obj=obj,
             tile=Tile(tile_x, tile_y),
@@ -362,7 +385,7 @@ def place_stall(
     """
     with game_context() as game:
         ensure_paused(game)
-        obj = _resolve_ride_object(ride_object)
+        obj = _resolve_ride_object(ride_object, game)
         if path_x is not None and path_y is not None:
             from openrct2_mcp.placement_tools import place_stall_beside_path
 
@@ -408,7 +431,7 @@ def manage_paths(
 
     place_line / place_tile also fill one-tile gaps beside the new tiles. Pass
     repair_gaps=false for exact shapes (hollow squares, lettering) where those
-    gaps are intentional.
+    gaps are intentional. queue=true places queue tiles and skips gap repair.
 
     surface: footpath surface for place_line / place_tile, by identifier or
     name (e.g. "red and brown tiled"); omit for the scenario default.
@@ -422,11 +445,14 @@ def manage_paths(
         if action == "remove_tile":
             if tile_x is None or tile_y is None:
                 raise ValueError("remove_tile requires tile_x and tile_y")
-            from openrct2_mcp.path_connectivity import analyze_path_connectivity
+            from openrct2_mcp.path_connectivity import (
+                analyze_path_connectivity,
+                summarize_connectivity,
+            )
 
-            before = analyze_path_connectivity(game)
+            before = summarize_connectivity(analyze_path_connectivity(game))
             game.paths.remove(Tile(tile_x, tile_y))
-            after = analyze_path_connectivity(game)
+            after = summarize_connectivity(analyze_path_connectivity(game))
             log_action("remove_path_tile", {"tile": [tile_x, tile_y]})
             return _json(
                 {
@@ -462,29 +488,43 @@ def manage_paths(
             from openrct2_mcp.path_connectivity import (
                 analyze_path_connectivity,
                 repair_one_tile_gaps,
+                summarize_connectivity,
             )
 
-            result = game.paths.place_line(Tile(from_x, from_y), Tile(to_x, to_y), surface=surface_info)
+            result = game.paths.place_line(
+                Tile(from_x, from_y), Tile(to_x, to_y), queue=queue, surface=surface_info
+            )
             x1, x2 = sorted([from_x, to_x])
             y1, y2 = sorted([from_y, to_y])
             line = [(tx, ty) for tx in range(x1, x2 + 1) for ty in range(y1, y2 + 1)]
-            gap_repair = repair_one_tile_gaps(game, near=line, surface=surface_info) if repair_gaps else None
+            # Gap fills are plain footpath; next to a queue they would merge it into the walkway.
+            gap_repair = (
+                repair_one_tile_gaps(game, near=line, surface=surface_info)
+                if repair_gaps and not queue
+                else None
+            )
             return _json(
                 {
                     "placed": result.succeeded,
                     "failed": result.failed,
                     "gap_repair": gap_repair,
-                    "connectivity": analyze_path_connectivity(game),
+                    "connectivity": summarize_connectivity(analyze_path_connectivity(game)),
                 }
             )
         if action == "place_tile":
             if tile_x is None or tile_y is None:
                 raise ValueError("place_tile requires tile_x and tile_y")
-            from openrct2_mcp.path_connectivity import analyze_path_connectivity, repair_one_tile_gaps
+            from openrct2_mcp.path_connectivity import (
+                analyze_path_connectivity,
+                repair_one_tile_gaps,
+                summarize_connectivity,
+            )
 
             game.paths.place(Tile(tile_x, tile_y), queue=queue, surface=surface_info)
             gap_repair = (
-                repair_one_tile_gaps(game, near=[(tile_x, tile_y)], surface=surface_info) if repair_gaps else None
+                repair_one_tile_gaps(game, near=[(tile_x, tile_y)], surface=surface_info)
+                if repair_gaps and not queue
+                else None
             )
             return _json(
                 {
@@ -492,7 +532,7 @@ def manage_paths(
                     "tile": [tile_x, tile_y],
                     "queue": queue,
                     "gap_repair": gap_repair,
-                    "connectivity": analyze_path_connectivity(game),
+                    "connectivity": summarize_connectivity(analyze_path_connectivity(game)),
                 }
             )
         if action == "place_addition":
@@ -1172,7 +1212,7 @@ def coaster_plan_build_tool(
             near_y=near_y,
             ride_builder=SESSION.ride_builder,
         )
-        return _json(plan.to_dict())
+        return _json(plan.to_compact_dict())
 
 
 @mcp.tool()
@@ -1657,7 +1697,11 @@ def apply_theme_preset_tool(
     region_height: int | None = None,
     dry_run: bool = False,
 ) -> str:
-    """Apply a theme preset along footpaths (benches, bins, flowers, grass)."""
+    """Apply a theme preset along owned footpaths.
+
+    Benches and bins on paths, flowers (or loaded shrubs/topiary/ornamental trees as
+    a fallback) on free owned ground beside them, and grass paint.
+    """
     with game_context() as game:
         if not dry_run:
             ensure_paused(game)
@@ -1765,18 +1809,49 @@ def set_ride_mode_tool(ride_id: int, mode: int) -> str:
 
 @mcp.tool()
 def set_num_trains_tool(ride_id: int, count: int) -> str:
-    """Set number of trains/cars on a coaster."""
+    """Set the number of trains; returns the trains the game actually runs.
+
+    The game clamps the count (block-sectioned rides allow stations + block
+    sections - 1 trains). Trains only exist while the ride is open or testing.
+    """
     with game_context() as game:
         ensure_paused(game)
-        return _json(set_num_trains(game, ride_id, count))
+        return _json(set_num_trains(game, ride_id, count, SESSION.ride_builder))
+
+
+@mcp.tool()
+def replace_track_piece_tool(
+    ride_id: int,
+    tile_x: int,
+    tile_y: int,
+    new_track_type: int,
+    tile_z: int | None = None,
+    brake_speed: int = 0,
+    confirm_destructive: bool = False,
+) -> str:
+    """Swap one track piece for another with identical geometry (closes the ride).
+
+    Example: the flat before a station -> Block Brakes (216), so a block-sectioned
+    coaster can run one more train. Only same-shape swaps are allowed; the old
+    piece is restored if placement fails. Requires confirm_destructive=true.
+    """
+    if not confirm_destructive:
+        return _json({"ok": False, "error": "Set confirm_destructive=true to modify ride track."})
+    with game_context() as game:
+        ensure_paused(game)
+        result = replace_track_piece(
+            game, ride_id, tile_x, tile_y, new_track_type, tile_z=tile_z, brake_speed=brake_speed
+        )
+        log_action("replace_track_piece", {"ride_id": ride_id, "tile": [tile_x, tile_y], "new": new_track_type})
+        return _json(result)
 
 
 @mcp.tool()
 def set_cars_per_train_tool(ride_id: int, count: int) -> str:
-    """Set cars per train on a coaster."""
+    """Set cars per train; returns the car counts the game actually applied."""
     with game_context() as game:
         ensure_paused(game)
-        return _json(set_cars_per_train(game, ride_id, count))
+        return _json(set_cars_per_train(game, ride_id, count, SESSION.ride_builder))
 
 
 @mcp.tool()
@@ -1974,6 +2049,18 @@ def get_finance_summary_tool() -> str:
 
 
 @mcp.tool()
+def set_loan_tool(amount: int) -> str:
+    """Set the bank loan in money units ($1 = 10, so 200000 = $20,000).
+
+    Clamped to [0, max_loan] and rounded down to a $1,000 step.
+    """
+    with game_context() as game:
+        result = set_loan(game, amount)
+        log_action("set_loan", {"amount": amount, "loan": result["loan"]})
+        return _json(result)
+
+
+@mcp.tool()
 def scenario_progress_tool() -> str:
     """Scenario objective, awards, and park rating."""
     with game_context() as game:
@@ -2011,7 +2098,12 @@ def set_research_funding_tool(level: str) -> str:
 
 @mcp.tool()
 def set_research_priorities_tool(categories_json: str) -> str:
-    """Set research priorities JSON list: transport, gentle, rollercoaster, thrill, water, shop, scenery."""
+    """Enable exactly these research categories; all others are disabled, funding is kept.
+
+    categories_json: JSON list of transport, gentle, rollercoaster, thrill, water, shop,
+    scenery. OpenRCT2 has no research order, so list order is ignored. Returns the
+    enabled/disabled categories read back from the game.
+    """
     with game_context() as game:
         ensure_paused(game)
         cats = json.loads(categories_json)
@@ -2377,11 +2469,27 @@ def place_ride_at_best_tile_tool(
     near_x: int | None = None,
     near_y: int | None = None,
     is_stall: bool = True,
+    connect_paths: bool = True,
 ) -> str:
-    """Place stall or flat ride on surveyed open land."""
+    """Place stall or flat ride on surveyed open land.
+
+    ride_object: identifier (rct2.ride.mgr1), catalog path, or display name.
+    Flat rides get entrance/exit beside the real footprint, on the side facing
+    the nearest entrance-connected path; connect_paths lays footpath to them.
+    """
     with game_context() as game:
         ensure_paused(game)
-        return _json(place_ride_at_best_tile(game, ride_object, near_x=near_x, near_y=near_y, is_stall=is_stall))
+        obj = _resolve_ride_object(ride_object, game)
+        return _json(
+            place_ride_at_best_tile(
+                game,
+                obj,
+                near_x=near_x,
+                near_y=near_y,
+                is_stall=is_stall,
+                connect_paths=connect_paths,
+            )
+        )
 
 
 @mcp.tool()
@@ -2416,13 +2524,49 @@ def clear_action_log_tool() -> str:
     return _json({"cleared": clear_action_log()})
 
 
-def _resolve_ride_object(name: str):
-    parts = name.split(".")
-    obj = RideObjects
-    for i, part in enumerate(parts):
-        key = part.lower() if i == 0 and len(parts) > 1 else part.upper()
-        obj = getattr(obj, key)
-    return obj
+def _catalog_ride_object(name: str):
+    """Look up a catalog entry by path (stall.BURGER_BAR), identifier, or display name."""
+    obj = RideObjects.by_identifier(name)
+    if obj is not None:
+        return obj
+    try:
+        obj = RideObjects
+        parts = name.split(".")
+        for i, part in enumerate(parts):
+            key = part.lower() if i == 0 and len(parts) > 1 else part.upper()
+            obj = getattr(obj, key)
+        return obj
+    except AttributeError:
+        pass
+    wanted = name.strip().lower()
+    return next((o for o in RideObjects.all() if o.name.lower() == wanted), None)
+
+
+def _resolve_ride_object(name: str, game: RCT2):
+    """Resolve a ride object to the copy loaded in this scenario.
+
+    pyrct2's catalog lists one identifier per object, but a scenario can load another
+    copy with the same name (e.g. rct1.ride.fruity_ices_stall instead of
+    rct2.ride.icecr1). Accepts a catalog path, an identifier, or a display name.
+    """
+    loaded = game._query("get_objects", {"type": "ride"})
+    loaded_by_id = {o["identifier"]: o for o in loaded}
+    obj = _catalog_ride_object(name)
+    if obj is not None and obj.identifier in loaded_by_id:
+        return obj
+    match = loaded_by_id.get(name)
+    if match is None:
+        wanted = (obj.name if obj is not None else name).strip().lower()
+        match = next((o for o in loaded if o.get("name", "").lower() == wanted), None)
+    if match is None:
+        raise ValueError(
+            f"Ride object {name!r} is not loaded in this scenario. "
+            "Loaded objects: list_loaded_ride_objects"
+        )
+    template = obj or _catalog_ride_object(match["name"])
+    if template is None:
+        raise ValueError(f"Ride object {match['identifier']!r} is loaded but unknown to pyrct2's catalog")
+    return template.model_copy(update={"identifier": match["identifier"]})
 
 
 def main() -> None:

@@ -79,6 +79,29 @@ def merge_mcp_config(existing: dict, python: str) -> dict:
     return config
 
 
+def ride_builder_install_state(plugin_dir: Path | None = None) -> dict:
+    """Compare the deployed ride-builder plugin with the repo copy.
+
+    A stale deployed copy silently runs old plugin code (it once placed coaster
+    entrances backwards long after the repo was fixed).
+    """
+    if plugin_dir is None:
+        plugin_dir = openrct2_user_dir() / "plugin"
+    deployed = plugin_dir / "ride-builder.js"
+    state: dict = {"deployed_path": str(deployed)}
+    if not deployed.exists():
+        state["up_to_date"] = False
+        state["warning"] = "ride-builder.js is not installed; run `python -m openrct2_mcp.install`."
+        return state
+    state["up_to_date"] = deployed.read_bytes() == RIDE_BUILDER_SRC.read_bytes()
+    if not state["up_to_date"]:
+        state["warning"] = (
+            "The deployed ride-builder.js differs from the repo copy. Close the game and run "
+            "`python -m openrct2_mcp.install` so the game runs the current plugin."
+        )
+    return state
+
+
 def _install_bridge(plugin_dir: Path) -> Path:
     target = plugin_dir / BRIDGE_FILENAME
     if target.exists():
