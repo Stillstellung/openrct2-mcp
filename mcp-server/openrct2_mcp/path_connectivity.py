@@ -410,6 +410,30 @@ def find_queue_adjacent_gaps(
     return [g for g in find_one_tile_gaps(path_tiles, blocked=blocked) if (g[0], g[1]) in near_queue]
 
 
+# Track this far above the highest path still counts as in the way of a gap fill.
+GAP_HEADROOM_TILE_Z = 4
+
+
+def occupied_ground_tiles(game: RCT2, nodes: Mapping[Node, PathInfo] | None = None) -> set[tuple[int, int]]:
+    """Tiles a gap fill can't use: ride entrances/exits, and track or stalls near path height.
+
+    Track well above every path (a coaster passing overhead) does not block.
+    """
+    path_z = [z for (_, _, z) in nodes] if nodes else []
+    top = (max(path_z) if path_z else 12) + GAP_HEADROOM_TILE_Z
+    occupied: set[tuple[int, int]] = set()
+    for kind in ("entrance", "track"):
+        try:
+            elements = game.world.get_elements_by_type(kind)
+        except Exception:
+            continue
+        for el in elements:
+            if kind == "track" and int(el.get("baseZ", 0)) // 8 > top:
+                continue
+            occupied.add((int(el["tileX"]), int(el["tileY"])))
+    return occupied
+
+
 def analyze_path_connectivity(game: RCT2, *, sample: int = REPORT_TILE_SAMPLE) -> dict[str, Any]:
     """Summarize path reachability from park entrance and detect one-tile gaps.
 
@@ -430,8 +454,9 @@ def analyze_path_connectivity(game: RCT2, *, sample: int = REPORT_TILE_SAMPLE) -
     unreachable = sorted(set(nodes) - reachable)
     components = node_components({n: nodes[n] for n in unreachable})
     components = sorted(components, key=len, reverse=True)
-    gaps = find_one_tile_gaps(nodes, blocked=entrance_set, queue_tiles=queue_tiles)
-    queue_gaps = find_queue_adjacent_gaps(nodes, queue_tiles, blocked=entrance_set)
+    blocked = entrance_set | occupied_ground_tiles(game, nodes)
+    gaps = find_one_tile_gaps(nodes, blocked=blocked, queue_tiles=queue_tiles)
+    queue_gaps = find_queue_adjacent_gaps(nodes, queue_tiles, blocked=blocked)
 
     return {
         "entrance_tiles": [[x, y] for x, y in entrance_tiles],

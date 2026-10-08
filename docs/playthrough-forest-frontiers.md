@@ -310,3 +310,30 @@ All of these were fixed after phase 2 (see the commit that follows this log):
   drag the rating.
 - Park at Y3 August: **rating 925** (best so far), 1,116 guests, avg happiness 212.6,
   3 unhappy guests, $24k cash, 21 handymen, 6 security, 3 mechanics.
+
+## Phase 6: freeform coaster generator
+
+- **Why every coaster looked the same**: all of them came from my own brute-force search over
+  one recipe (station, lift, drop, straight leg, U-turn, straight leg back, U-turn), which
+  always yields a long narrow hairpin. That recipe made closing the circuit trivial; the
+  piece vocabulary was never the limit (it has sloped quarter turns 34-37/46-49, quarter and
+  half helixes 102-109/87-94, banked turns, half loops, large corkscrews, quarter loops).
+- **New `coaster_freeform.py` + `coaster_generate_freeform_tool`**: random walk over flat-to-flat
+  *modules* (sloped turns, drops, hops, camelbacks, helixes, banked turns, loops/corkscrews on
+  looping types) inside an owned-tile mask, crossing itself only with a 5 tile_z gap, flying
+  over paths/rides only above their top, tunnelling only when deep enough; an energy model
+  (head = lift peak - height - 0.12/piece) gates unchained climbs and inversions; then an A*
+  search over closing modules (turns, dips, short chain lifts) steers the track back into its
+  own station. Candidates are linted, scored (length, drops, turns, inversions, footprint) and
+  the best is returned with a height map.
+- On open ground it produces 60+ piece layouts covering ~145 tiles with a dozen direction
+  changes. In the crowded park only one station/lift combination of 1,008 tried could close:
+  "Sky Sweeper" (Looping RC, 46 pieces, 20x20 footprint, turning first drop, camelback,
+  mid-course chain lift, staircase of alternating turns flying over the park). Excitement
+  4.90 with a +14 lift and no inversions; the shape alone earns rating.
+- Generator lessons: stations must be checked against the mask (two unowned tiles killed
+  most candidates); the first drop needs turning variants or it runs into whatever is
+  ahead; a drop to ground level traps the train among obstacles, so cruising height and
+  mid-course lifts matter in built-up parks. The circuit enclosed its own station, so guest
+  access came from the one open side (bought two tiles and ran a path to the main entrance).
+- Park at Y3 October: **rating 961**, 1,243 guests.

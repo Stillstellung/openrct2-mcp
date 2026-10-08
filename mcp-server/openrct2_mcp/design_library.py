@@ -789,6 +789,47 @@ MAX_DUG_TILES = 40
 _BURIED_CLEAR_DEPTH = 6
 
 
+def pre_dig_for_design(
+    game: RCT2,
+    spec_at_target: dict[str, Any],
+    dug: list[list[int]],
+    dig_errors: list[str] | None = None,
+) -> int:
+    """Cut every tile where the simulated track crosses the land surface, in one pass.
+
+    Retrying piece by piece costs a probe per failing piece; terrain-heavy layouts
+    ran out of rounds. Deeply buried tiles (a tunnel) are left alone, and so are
+    tiles where the track is above ground. Returns the number of tiles dug.
+    """
+    try:
+        sim = simulate_design(spec_at_target)
+    except Exception:
+        return 0
+    lowest: dict[tuple[int, int], int] = {}
+    for _, x, y, base in _piece_tile_bases(sim):
+        lowest[(x, y)] = min(base, lowest.get((x, y), base))
+    count = 0
+    for (x, y), base in sorted(lowest.items()):
+        if len(dug) >= MAX_DUG_TILES:
+            break
+        surface = _surface_element(game, x, y)
+        if not surface:
+            continue
+        ground = int(surface.get("baseZ", 0)) // 8
+        top = ground + (2 if surface.get("slope", 0) else 0)
+        if base >= top or base <= ground - _BURIED_CLEAR_DEPTH:
+            continue
+        height = base - base % 2
+        try:
+            game.execute("landsetheight", {"x": x * 32, "y": y * 32, "height": height, "style": 0})
+            dug.append([x, y, height])
+            count += 1
+        except Exception as exc:
+            if dig_errors is not None:
+                dig_errors.append(f"({x},{y}) -> z{height}: {str(exc)[:120]}")
+    return count
+
+
 def dig_for_track_failure(
     game: RCT2,
     spec_at_target: dict[str, Any],
@@ -913,6 +954,8 @@ def fit_coaster_design(
         return out
 
     t1 = time.monotonic()
+    if excavate:
+        pre_dig_for_design(game, spec_for_lint, dug, dig_errors)
     for attempt in range(MAX_DIG_ROUNDS + 1):
         try:
             probe = ride_builder.call("probeRideDesign", {"design": spec, "target": target})

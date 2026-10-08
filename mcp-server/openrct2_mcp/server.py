@@ -2325,6 +2325,64 @@ def lint_coaster_design_tool(design_json: str, envelope_json: str = "") -> str:
 
 
 @mcp.tool()
+def coaster_generate_freeform_tool(
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    station_x: int,
+    station_y: int,
+    station_direction: int,
+    ride_type: int = 15,
+    lift: int = 12,
+    budget: int = 50,
+    attempts: int = 300,
+    seed: int | None = None,
+    station_z: int | None = None,
+    allow_tunnels: bool = True,
+) -> str:
+    """Generate a wandering (non-hairpin) coaster layout inside an owned rectangle.
+
+    Random modules (sloped turns, drops, hops, helixes, banked turns, and loops or
+    corkscrews on looping ride types) wander from a chain lift, cross over the
+    ride itself and over existing paths/rides when high enough, then an A*
+    search steers the track back into the station (adding a second chain lift
+    if needed). The best-scoring closed layout is returned as a DesignSpec plus
+    stats and a height map; place it with coaster_fit_design_tool (use
+    excavate=true when it tunnels). station_* is the BeginStation tile and
+    direction (0=-x, 1=+y, 2=+x, 3=-y); the station runs 5 tiles that way and
+    needs clear flat ground. lift is the number of 25-degree chain pieces
+    (height about 2*lift+2). budget is the wander length in pieces.
+    """
+    from openrct2_mcp.coaster_freeform import generate, render_ascii, terrain_from_game
+
+    with game_context() as game:
+        terrain = terrain_from_game(game, x1, y1, x2, y2)
+        terrain.allow_tunnels = allow_tunnels
+        if station_z is None:
+            station_z = terrain.ground.get((station_x, station_y), 12)
+        result = generate(
+            origin=(station_x, station_y, station_z, station_direction % 4),
+            terrain=terrain,
+            ride_type=ride_type,
+            lift=lift,
+            budget=budget,
+            attempts=attempts,
+            seed=seed,
+        )
+        if result is None:
+            return _json({
+                "ok": False,
+                "error": "no closed layout found; try more attempts, a lower lift, a smaller budget, "
+                "a larger rectangle, or a station with room around its ends",
+                "owned_tiles": len(terrain.ground),
+            })
+        result["ok"] = True
+        result["height_map"] = render_ascii(result["design"])
+        return _json(result)
+
+
+@mcp.tool()
 def coaster_fit_design_tool(
     design_json: str,
     tile_x: int,

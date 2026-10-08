@@ -172,7 +172,12 @@ def validate_pad_tiles(
 
 
 def _park_path_tiles(game: RCT2) -> set[tuple[int, int]]:
-    return {(p["tileX"], p["tileY"]) for p in game.world.get_elements_by_type("footpath")}
+    # Queue tiles can't anchor a new route: paths only join a queue at its ends.
+    return {
+        (p["tileX"], p["tileY"])
+        for p in game.world.get_elements_by_type("footpath")
+        if not p.get("isQueue")
+    }
 
 
 def find_nearest_path_tile(

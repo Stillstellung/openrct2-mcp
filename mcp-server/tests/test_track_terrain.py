@@ -286,3 +286,37 @@ def test_flat_ride_placement_points_tower_rides_at_the_tower_tool():
     assert is_tower_ride(tower)
     with pytest.raises(ValueError, match="build_tower_ride_tool"):
         place_ride_at_best_tile(mock.Mock(), tower, is_stall=False)
+
+
+def test_pre_dig_cuts_every_crossing_tile_in_one_pass():
+    from openrct2_mcp.design_library import pre_dig_for_design
+
+    class Hill:
+        """Ground at 16 for x >= 12, flat 12 elsewhere."""
+
+        def __init__(self):
+            self.ground = {}
+            self.calls = []
+
+        def _query(self, endpoint, params):
+            x = params["x"]
+            z = self.ground.get((x, params["y"]), 16 if x >= 12 else 12)
+            return {"elements": [{"type": "surface", "baseZ": z * 8, "slope": 0}]}
+
+        def execute(self, endpoint, params):
+            x, y = params["x"] // 32, params["y"] // 32
+            self.ground[(x, y)] = params["height"]
+            self.calls.append((x, y, params["height"]))
+            return {"success": True}
+
+    spec = {
+        "version": 1,
+        "ride_type": 95,
+        "pieces": [{"track_type": 2}] + [{"track_type": 0}] * 6,
+        "origin": {"x": 8, "y": 5, "z": 12, "direction": 2},
+    }
+    game, dug = Hill(), []
+    count = pre_dig_for_design(game, spec, dug)
+    assert count == 3  # x 12, 13, 14 cross the hill; x 8..11 are on flat ground
+    assert sorted(c[0] for c in game.calls) == [12, 13, 14]
+    assert all(h == 12 for _, _, h in game.calls)
