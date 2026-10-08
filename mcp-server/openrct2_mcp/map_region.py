@@ -9,6 +9,7 @@ from pyrct2.client import RCT2
 from pyrct2.world._tile import Tile
 
 from openrct2_mcp.connection import RideBuilderClient
+from openrct2_mcp.units import surface_owned
 
 MAX_REGION_SIDE = 40
 MAP_ELEMENT_TYPES = ("footpath", "track", "entrance")
@@ -242,8 +243,7 @@ def find_buildable_loop(
     unowned = []
     non_flat = []
     for t in tiles:
-        own = t.surface.ownership
-        if own is None or own == 0:
+        if not surface_owned(t.surface):
             unowned.append([t.x, t.y])
         if t.surface.slope != 0:
             non_flat.append([t.x, t.y])

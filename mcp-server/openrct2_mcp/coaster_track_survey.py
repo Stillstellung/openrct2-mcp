@@ -316,7 +316,7 @@ def survey_build_site(
     slope_rows: list[list[int | None]] = []
     flat_sites: list[dict[str, Any]] = []
 
-    for ty in range(y2, y1 - 1, -1):
+    for ty in range(y1, y2 + 1):
         z_row: list[int | None] = []
         s_row: list[int | None] = []
         for tx in range(x1, x2 + 1):
@@ -350,7 +350,7 @@ def survey_build_site(
         "height_grid_tile_z": height_rows,
         "slope_grid": slope_rows,
         "obstacle_ascii": render_obstacle_ascii(env),
-        "legend": "height_grid_tile_z rows are north→south; tile_z = base_z // 8",
+        "legend": "grid rows run from lowest y (first) to highest y, columns lowest x first; tile_z = base_z // 8",
     }
 
 

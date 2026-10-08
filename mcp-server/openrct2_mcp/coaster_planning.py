@@ -15,8 +15,9 @@ from pyrct2.client import RCT2
 from pyrct2.world._tile import Tile
 
 from openrct2_mcp.connection import RideBuilderClient
+from openrct2_mcp.units import surface_owned
 
-# OpenRCT2 map directions: 0=west, 1=north (+y), 2=east (+x), 3=south (-y).
+# OpenRCT2 map directions: 0 = -x, 1 = +y, 2 = +x, 3 = -y (see units.DIR_DELTA).
 DIR_DELTA: dict[int, tuple[int, int]] = {
     0: (-1, 0),
     1: (0, 1),
@@ -102,19 +103,19 @@ def footprint_owned_ratio(env: TrackEnvironment, footprint: list[tuple[int, int]
 # Quarter-turn footprint offsets (dx, dy) from entry tile by incoming direction.
 # Approximates multi-tile curves for lookahead without placing track.
 TURN_FOOTPRINT: dict[int, dict[str, list[tuple[int, int]]]] = {
-    2: {  # facing east
+    2: {  # facing +x
         "left": [(0, 0), (1, 0), (2, 0), (2, -1), (2, -2)],
         "right": [(0, 0), (1, 0), (2, 0), (2, 1), (2, 2)],
     },
-    0: {  # facing west
+    0: {  # facing -x
         "left": [(0, 0), (-1, 0), (-2, 0), (-2, 1), (-2, 2)],
         "right": [(0, 0), (-1, 0), (-2, 0), (-2, -1), (-2, -2)],
     },
-    1: {  # facing north
+    1: {  # facing +y
         "left": [(0, 0), (0, 1), (0, 2), (1, 2), (2, 2)],
         "right": [(0, 0), (0, 1), (0, 2), (-1, 2), (-2, 2)],
     },
-    3: {  # facing south
+    3: {  # facing -y
         "left": [(0, 0), (0, -1), (0, -2), (-1, -2), (-2, -2)],
         "right": [(0, 0), (0, -1), (0, -2), (1, -2), (2, -2)],
     },
@@ -160,7 +161,7 @@ class TrackEnvironment:
 
     def ascii_around(self, x: int, y: int, radius: int = 4) -> str:
         lines: list[str] = []
-        for ty in range(y + radius, y - radius - 1, -1):
+        for ty in range(y - radius, y + radius + 1):  # lowest y first, like every map grid
             row: list[str] = []
             for tx in range(x - radius, x + radius + 1):
                 if tx == x and ty == y:
@@ -215,7 +216,7 @@ def build_track_environment(
         surf = tile.surface
         if surf.slope != 0:
             env.non_flat.add(xy)
-        if not surf.ownership:
+        if not surface_owned(surf):
             env.unowned.add(xy)
         if tile.scenery:
             env.scenery.add(xy)
@@ -275,7 +276,7 @@ def _surface_info_from_tile(tile: Any, *, map_width: int, map_height: int) -> di
     base_z = int(surf.baseZ)
     tile_z = base_z // 8
     slope = int(surf.slope)
-    owned = bool(surf.ownership)
+    owned = surface_owned(surf)
     obstacles: list[str] = []
     if not owned:
         obstacles.append("unowned")
@@ -466,7 +467,7 @@ def _apply_tiles_to_env(env: TrackEnvironment, tile_map: dict[tuple[int, int], A
         xy = (tile.x, tile.y)
         if tile.surface.slope != 0:
             env.non_flat.add(xy)
-        if not tile.surface.ownership:
+        if not surface_owned(tile.surface):
             env.unowned.add(xy)
         if tile.scenery:
             env.scenery.add(xy)
@@ -522,7 +523,7 @@ def obstacle_char(env: TrackEnvironment, x: int, y: int) -> str:
 
 def render_obstacle_ascii(env: TrackEnvironment) -> str:
     lines: list[str] = []
-    for ty in range(env.max_y, env.min_y - 1, -1):
+    for ty in range(env.min_y, env.max_y + 1):  # lowest y first
         row = "".join(obstacle_char(env, tx, ty) for tx in range(env.min_x, env.max_x + 1))
         lines.append(f"y{ty:3d} " + row)
     return "\n".join(lines)
@@ -1259,7 +1260,7 @@ def _tile_station_score(
     """Score a pre-fetched tile for station placement; returns (score, tile_z)."""
     if tile is None:
         return -999, None
-    if tile.surface.slope != 0 or not tile.surface.ownership:
+    if tile.surface.slope != 0 or not surface_owned(tile.surface):
         return -999, None
     score = 20.0
     if tile.tracks:
@@ -1282,13 +1283,13 @@ def _station_corridor_unowned_penalty(
     notes: list[str] = []
     for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
         adj = ring_tile_map.get((x + dx, y + dy))
-        if adj is not None and not adj.surface.ownership:
+        if adj is not None and not surface_owned(adj.surface):
             penalty += 35
             notes.append(f"adjacent unowned ({x + dx},{y + dy})")
     for step in range(1, lookahead + 1):
         tx, ty = forward_tile(x, y, direction, step)
         ahead = ring_tile_map.get((tx, ty))
-        if ahead is None or not ahead.surface.ownership:
+        if ahead is None or not surface_owned(ahead.surface):
             penalty += 45
             notes.append(f"unowned ahead +{step}")
             break

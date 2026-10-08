@@ -14,8 +14,10 @@ from pyrct2.world._tile import Tile
 from openrct2_mcp.land_tools import find_open_land
 from openrct2_mcp.path_connectivity import assert_tile_adjacent_to_entrance_network
 from openrct2_mcp.tower_rides import is_tower_ride, tower_ride_message
+from openrct2_mcp.units import surface_owned
 
-# Maximum surface baseZ mismatch between stall pad and adjacent guest path (8 = one land step).
+# Maximum surface baseZ mismatch between stall pad and adjacent guest path, in z units
+# (8 = 1 tile_z, half a land step).
 MAX_STALL_SURFACE_DELTA_Z = 8
 
 
@@ -130,7 +132,7 @@ def validate_stall_site(
     stall_tile = game.world.get_tile(Tile(stall_x, stall_y))
     if int(stall_tile.surface.slope) != 0:
         raise ValueError(f"Stall pad ({stall_x},{stall_y}) must be flat land, not a slope")
-    if not stall_tile.surface.ownership:
+    if not surface_owned(stall_tile.surface):
         raise ValueError(f"Stall pad ({stall_x},{stall_y}) is not owned park land")
     if stall_tile.paths or stall_tile.tracks:
         raise ValueError(f"Stall pad ({stall_x},{stall_y}) is blocked by paths or track")

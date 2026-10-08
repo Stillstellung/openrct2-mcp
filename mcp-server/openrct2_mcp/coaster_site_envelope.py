@@ -13,6 +13,7 @@ from typing import Any
 
 from pyrct2.client import RCT2
 from pyrct2.world._tile import Tile
+from openrct2_mcp.units import surface_owned, surface_underwater
 
 ENVELOPE_VERSION = 2
 
@@ -172,9 +173,9 @@ def build_site_envelope(
         surf = tile.surface
         tz = int(surf.baseZ) // 8
         ground_z[(tx, ty)] = tz
-        owned = bool(surf.ownership)
+        owned = surface_owned(surf)
         sloped = int(surf.slope) != 0
-        has_water = bool(surf.waterHeight) and int(surf.waterHeight) > int(surf.baseHeight)
+        has_water = surface_underwater(surf)
         has_path = bool(tile.paths)
         has_track = bool(tile.tracks)
         has_scenery = bool(tile.scenery) or any(
