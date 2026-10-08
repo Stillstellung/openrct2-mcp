@@ -24,6 +24,14 @@ PORT_SCAN_RANGE = 20
 PROBE_TIMEOUT = 0.15
 SETUP_HINT = "See README 'Quick setup' to install the plugins for your OS."
 
+# Requests that only read state; anything else may change the map, so the map
+# model checks the plugin's change feed before its next read.
+_READ_PREFIXES = ("get", "list", "probe", "query", "preview", "export", "health", "rides", "park", "scenario")
+
+
+def is_read_request(endpoint: str) -> bool:
+    return endpoint.lower().startswith(_READ_PREFIXES)
+
 
 class ConnectionError(RuntimeError):
     """Raised when OpenRCT2 plugins are not reachable."""
@@ -140,6 +148,8 @@ class RideBuilderClient:
             return parsed
 
     def call(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
+        if not is_read_request(endpoint):
+            SESSION.mark_map_stale()
         response = self.send(endpoint, params)
         if not response.get("success"):
             raise ConnectionError(
@@ -165,6 +175,31 @@ class GameSession:
         self._ride_builder: RideBuilderClient | None = None
         self._bridge_port = DEFAULT_BRIDGE_PORT
         self._known_game_speed: int | None = None
+        self._map: Any = None
+
+    @property
+    def map(self):
+        """Cached map model (openrct2_mcp.map_model.MapModel), current with the game."""
+        if self._map is None:
+            from openrct2_mcp.map_model import ride_builder_model
+
+            self._map = ride_builder_model(lambda: self.ride_builder)
+        return self._map
+
+    def mark_map_stale(self) -> None:
+        if self._map is not None:
+            self._map.mark_stale()
+
+    def _watch_bridge_writes(self, game: RCT2) -> None:
+        connection = game._connection
+        send = connection.send
+
+        def send_and_mark(endpoint: str, params: dict | None = None) -> dict:
+            if not is_read_request(endpoint):
+                self.mark_map_stale()
+            return send(endpoint, params)
+
+        connection.send = send_and_mark
 
     def _connect_bridge(self) -> RCT2:
         last_error: Exception | None = None
@@ -186,6 +221,7 @@ class GameSession:
                     connection.close()
                     continue
                 game = RCT2(connection)
+                self._watch_bridge_writes(game)
                 self._bridge_port = candidate
                 game.pause()
                 game.park.cheats.build_in_pause_mode()
@@ -244,6 +280,7 @@ class GameSession:
             self._ride_builder.close()
             self._ride_builder = None
         self._known_game_speed = None
+        self._map = None
 
 
 SESSION = GameSession()
@@ -251,6 +288,8 @@ SESSION = GameSession()
 
 @contextmanager
 def game_context() -> Generator[RCT2, None, None]:
+    # Each tool call starts by checking the change feed (player edits included).
+    SESSION.mark_map_stale()
     try:
         yield SESSION.game
     except OSError:

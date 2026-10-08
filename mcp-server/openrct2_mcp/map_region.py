@@ -11,7 +11,9 @@ from pyrct2.world._tile import Tile
 from openrct2_mcp.connection import RideBuilderClient
 from openrct2_mcp.units import surface_owned
 
-MAX_REGION_SIDE = 40
+MAX_REGION_SIDE = 64
+# ride-builder getElementsInRect clamps each side to 40.
+MAX_ELEMENTS_RECT_SIDE = 40
 MAP_ELEMENT_TYPES = ("footpath", "track", "entrance")
 
 
@@ -30,8 +32,8 @@ def get_elements_in_rect(
     """
     if element_type not in MAP_ELEMENT_TYPES:
         raise ValueError(f"element_type must be one of {MAP_ELEMENT_TYPES}")
-    width = max(1, min(width, MAX_REGION_SIDE))
-    height = max(1, min(height, MAX_REGION_SIDE))
+    width = max(1, min(width, MAX_ELEMENTS_RECT_SIDE))
+    height = max(1, min(height, MAX_ELEMENTS_RECT_SIDE))
     bounds = {
         "minX": x,
         "minY": y,
@@ -59,8 +61,35 @@ def _compact_grid(grid: list[list[int | None]]) -> list[str]:
     return [" ".join("-" if v is None else str(v) for v in row) for row in grid]
 
 
+def region_char(t) -> str:
+    """One character per tile for compact ASCII maps (shared legend REGION_LEGEND)."""
+    if t is None:
+        return "?"
+    if any(e.kind == "park_gate" for e in t.entrances):
+        return "G"
+    if t.entrances:
+        return "X" if any(e.kind == "exit" for e in t.entrances) else "E"
+    if t.paths:
+        return "Q" if t.queue else "P"
+    if t.track:
+        return "T"
+    if t.scenery:
+        return "s"
+    if t.underwater:
+        return "~"
+    if not t.owned:
+        return "x"
+    return "." if t.flat else "/"
+
+
+REGION_LEGEND = (
+    ". owned flat grass  / owned slope  x not owned  ~ water  P path  Q queue  "
+    "T ride track  E ride entrance  X ride exit  G park gate  s scenery"
+)
+
+
 def get_map_region(
-    game: RCT2,
+    model,
     x: int,
     y: int,
     width: int,
@@ -68,82 +97,45 @@ def get_map_region(
     *,
     layers: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Compact grid for a rectangular map region (max 40×40)."""
-    layers = layers or ["ownership", "slope", "base_z", "path", "track", "scenery"]
+    """Compact grids for a rectangle (max 64x64) from the cached map model.
+
+    Layers: ``owned`` (1/0), ``tile_z`` (ground height; ``base_z`` is accepted as
+    an alias), ``slope`` (corner mask), ``top`` (highest built tile_z, 0 if none).
+    ``ascii`` is always included. Rows run lowest y first, columns lowest x first.
+    """
+    layers = [("tile_z" if l == "base_z" else "owned" if l == "ownership" else l) for l in (layers or ["owned", "slope", "tile_z"])]
     width = max(1, min(width, MAX_REGION_SIDE))
     height = max(1, min(height, MAX_REGION_SIDE))
-    x2 = x + width - 1
-    y2 = y + height - 1
+    x2, y2 = x + width - 1, y + height - 1
+    tiles = model.rect(x, y, x2, y2)
 
-    tiles = game.world.get_tiles(Tile(x, y), Tile(x2, y2))
-    tile_by_xy = {(t.x, t.y): t for t in tiles}
-
-    paths = game.world.get_elements_by_type("footpath")
-    path_cells = {(p["tileX"], p["tileY"]) for p in paths}
-
-    result_layers: dict[str, Any] = {}
-    rows: list[list[str]] = []
-
-    for ty in range(y, y2 + 1):
-        row_chars: list[str] = []
-        for tx in range(x, x2 + 1):
-            td = tile_by_xy.get((tx, ty))
-            if td is None:
-                row_chars.append("?")
-                continue
-            ch = "."
-            if (tx, ty) in path_cells:
-                ch = "P"
-            if td.tracks:
-                ch = "T" if ch == "." else ch
-            if td.scenery:
-                ch = "s" if ch == "." else ch
-            row_chars.append(ch)
-        rows.append("".join(row_chars))
-
-    if "ownership" in layers or "base_z" in layers or "slope" in layers:
-        ownership_grid: list[list[int | None]] = []
-        base_z_grid: list[list[int | None]] = []
-        slope_grid: list[list[int | None]] = []
+    def grid(fn) -> list[str]:
+        out = []
         for ty in range(y, y2 + 1):
-            o_row: list[int | None] = []
-            z_row: list[int | None] = []
-            s_row: list[int | None] = []
+            row = []
             for tx in range(x, x2 + 1):
-                td = tile_by_xy.get((tx, ty))
-                if td is None:
-                    o_row.append(None)
-                    z_row.append(None)
-                    s_row.append(None)
-                    continue
-                surf = td.surface
-                o_row.append(getattr(surf, "ownership", None))
-                z_row.append(surf.baseZ)
-                s_row.append(surf.slope)
-            ownership_grid.append(o_row)
-            base_z_grid.append(z_row)
-            slope_grid.append(s_row)
-        if "ownership" in layers:
-            result_layers["ownership"] = _compact_grid(ownership_grid)
-        if "base_z" in layers:
-            result_layers["base_z"] = _compact_grid(base_z_grid)
-        if "slope" in layers:
-            result_layers["slope"] = _compact_grid(slope_grid)
-        result_layers["grid_format"] = (
-            "numeric layers: one string per row, north (first y) to south; "
-            "space-separated values west to east; '-' = no data"
-        )
+                t = tiles.get((tx, ty))
+                row.append("-" if t is None else str(fn(t)))
+            out.append(" ".join(row))
+        return out
 
-    result_layers["ascii"] = "\n".join(f"y{ty:3d} " + rows[i] for i, ty in enumerate(range(y, y2 + 1)))
-    result_layers["legend"] = ". empty  P path  T track  s scenery"
-
-    return {
-        "origin": [x, y],
-        "size": [width, height],
-        "layers": result_layers,
-        "tile_count": width * height,
-    }
-
+    result: dict[str, Any] = {}
+    if "owned" in layers:
+        result["owned"] = grid(lambda t: int(t.owned))
+    if "tile_z" in layers:
+        result["tile_z"] = grid(lambda t: t.ground)
+    if "slope" in layers:
+        result["slope"] = grid(lambda t: t.slope)
+    if "top" in layers:
+        result["top"] = grid(lambda t: t.top)
+    result["grid_format"] = (
+        "one string per row, lowest y first; space-separated values from lowest x; '-' = off the map; heights are tile_z"
+    )
+    result["ascii"] = "\n".join(
+        f"y{ty:3d} " + "".join(region_char(tiles.get((tx, ty))) for tx in range(x, x2 + 1)) for ty in range(y, y2 + 1)
+    )
+    result["legend"] = REGION_LEGEND
+    return {"origin": [x, y], "size": [width, height], "layers": result, "tile_count": width * height}
 
 def get_path_graph(
     game: RCT2,

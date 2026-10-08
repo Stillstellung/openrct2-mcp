@@ -1530,12 +1530,17 @@ def get_map_region_tool(
     y: int,
     width: int,
     height: int,
-    layers: str = "ownership,slope,base_z,path",
+    layers: str = "owned,slope,tile_z",
 ) -> str:
-    """Compact map region grid (max 40×40). layers: comma-separated layer names."""
-    with game_context() as game:
+    """Compact map grids for a rectangle (max 64x64), read from the cached map model.
+
+    layers (comma-separated): owned (1/0), tile_z (ground height), slope, top
+    (highest built tile_z). An ASCII map with paths, queues, track, entrances,
+    scenery, water and unowned land is always included. Rows: lowest y first.
+    """
+    with game_context():
         layer_list = [s.strip() for s in layers.split(",") if s.strip()]
-        return _json(get_map_region(game, x, y, width, height, layers=layer_list))
+        return _json(get_map_region(SESSION.map, x, y, width, height, layers=layer_list))
 
 
 @mcp.tool()

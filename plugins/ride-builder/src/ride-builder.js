@@ -129,6 +129,9 @@ function main() {
         ["getRideTrains",        params => handleGetRideTrains(params)],
         ["moveCamera",           params => handleMoveCamera(params)],
         ["queryActions",         params => handleQueryActions(params)],
+        ["getMapSnapshot",       params => handleGetMapSnapshot(params)],
+        ["getMapChanges",        params => handleGetMapChanges(params)],
+        ["getRecentActions",     params => handleGetRecentActions(params)],
         ["listRideMaintenance",  () => handleListRideMaintenance()],
         ["getGameSpeed",         () => handleGetGameSpeed()],
         ["getElementsInRect",    params => handleGetElementsInRect(params)],
@@ -480,6 +483,162 @@ function main() {
             }))));
         }
         return results;
+    }
+
+    // ---- Map snapshot and change tracking ------------------------------------
+    // Heights are tile_z (baseZ / 8) throughout. Dense layers are row-major,
+    // lowest y first: index = (y - minY) * width + (x - minX).
+    const SNAPSHOT_MAX_SIDE = 64;
+    const FLAG = {
+        OWNED: 1, CONSTRUCTION_RIGHTS: 2, WATER: 4, PATH: 8, QUEUE: 16, TRACK: 32,
+        ENTRANCE: 64, SMALL_SCENERY: 128, LARGE_SCENERY: 256, WALL: 512, BANNER: 1024,
+    };
+    const SCENERY_KIND = { small_scenery: 0, large_scenery: 1, wall: 2, banner: 3 };
+    const tz = z => Math.floor(z / 8);
+
+    async function handleGetMapSnapshot(params) {
+        const b = params && params.bounds;
+        if (!b || !isFiniteInteger(b.minX) || !isFiniteInteger(b.minY) || !isFiniteInteger(b.maxX) || !isFiniteInteger(b.maxY)) {
+            throw new Error("Missing or invalid parameter: bounds {minX, minY, maxX, maxY} (tiles)");
+        }
+        const minX = Math.max(0, Math.min(b.minX, b.maxX));
+        const minY = Math.max(0, Math.min(b.minY, b.maxY));
+        const maxX = Math.min(map.size.x - 1, Math.max(b.minX, b.maxX), minX + SNAPSHOT_MAX_SIDE - 1);
+        const maxY = Math.min(map.size.y - 1, Math.max(b.minY, b.maxY), minY + SNAPSHOT_MAX_SIDE - 1);
+        const width = Math.max(0, maxX - minX + 1);
+        const height = Math.max(0, maxY - minY + 1);
+        const n = width * height;
+        const ground = new Array(n).fill(0), slope = new Array(n).fill(0), flags = new Array(n).fill(0);
+        const water = new Array(n).fill(0), top = new Array(n).fill(0), style = new Array(n).fill(0);
+        const paths = [], track = [], entrances = [], scenery = [];
+        for (let y = minY; y <= maxY; y++) {
+            for (let x = minX; x <= maxX; x++) {
+                const i = (y - minY) * width + (x - minX);
+                const tile = map.getTile(x, y);
+                if (!tile) continue;
+                let f = 0, t = 0;
+                for (const el of tile.elements) {
+                    if (el.isGhost) continue;
+                    const z = tz(el.baseZ);
+                    if (el.type === "surface") {
+                        ground[i] = z;
+                        slope[i] = el.slope || 0;
+                        style[i] = el.surfaceStyle || 0;
+                        if (el.hasOwnership) f |= FLAG.OWNED;
+                        if (el.hasConstructionRights) f |= FLAG.CONSTRUCTION_RIGHTS;
+                        if (el.waterHeight > el.baseZ) { f |= FLAG.WATER; water[i] = tz(el.waterHeight); }
+                        continue;
+                    }
+                    t = Math.max(t, tz(el.clearanceZ));
+                    if (el.type === "footpath") {
+                        f |= FLAG.PATH;
+                        if (el.isQueue) f |= FLAG.QUEUE;
+                        paths.push([i, z, el.edges || 0, el.slopeDirection == null ? -1 : el.slopeDirection,
+                            el.isQueue ? 1 : 0, el.addition == null ? -1 : el.addition, el.isAdditionBroken ? 1 : 0]);
+                    } else if (el.type === "track") {
+                        f |= FLAG.TRACK;
+                        track.push([i, z, el.ride, el.trackType, el.sequence == null ? 0 : el.sequence, tz(el.clearanceZ), el.direction]);
+                    } else if (el.type === "entrance") {
+                        f |= FLAG.ENTRANCE;
+                        entrances.push([i, z, el.ride == null ? -1 : el.ride, el.station == null ? -1 : el.station, el.object, el.direction]);
+                    } else if (el.type in SCENERY_KIND) {
+                        const kind = SCENERY_KIND[el.type];
+                        f |= [FLAG.SMALL_SCENERY, FLAG.LARGE_SCENERY, FLAG.WALL, FLAG.BANNER][kind];
+                        const extra = kind === 0 ? el.quadrant : el.direction;
+                        scenery.push([i, kind, el.object, z, tz(el.clearanceZ), extra == null ? 0 : extra]);
+                    }
+                }
+                flags[i] = f;
+                top[i] = t;
+            }
+        }
+        return {
+            bounds: { minX, minY, maxX, maxY }, width, height, mapSize: { x: map.size.x, y: map.size.y },
+            revision: mapRevision, sessionId: mapSessionId,
+            ground, slope, flags, water, top, style, paths, track, entrances, scenery,
+        };
+    }
+
+    // Every executed game action bumps the revision and records which tiles
+    // it may have touched, so the server can refresh only those.
+    const CHANGE_LOG_MAX = 4000;
+    const RECENT_ACTIONS_MAX = 50;
+    let mapSessionId = Math.floor(Math.random() * 1e9);
+    let mapRevision = 0;
+    let changeLog = [];          // { rev, kind: "rect" | "ride" | "all", ... }
+    let recentActions = [];
+
+    function recordChange(entry) {
+        mapRevision++;
+        entry.rev = mapRevision;
+        changeLog.push(entry);
+        if (changeLog.length > CHANGE_LOG_MAX) changeLog = changeLog.slice(-CHANGE_LOG_MAX);
+    }
+
+    // Actions that change nothing on the map.
+    const NON_MAP_ACTIONS = new Set([
+        "ridesetprice", "ridesetname", "ridesetsetting", "ridesetvehicle", "ridesetappearance", "ridesetcolourscheme",
+        "ridesetstatus", "ridefreezerating", "parksetloan", "parksetresearchfunding", "parksetname", "parksetparameter",
+        "parksetentrancefee", "parkmarketing", "staffhire", "stafffire", "staffsetname", "staffsetorders",
+        "staffsetcostume", "staffsetcolour", "staffsetpatrolarea", "guestsetname", "guestsetflags", "peeppickup",
+        "peepspawnplace", "pausetoggle", "gamesetspeed", "setcheat", "cheatset", "parksetdate", "scenariosetsetting",
+        "networkmodifygroup", "playerkick", "playersetgroup", "balloonpress", "ridecreate",
+    ]);
+
+    function changeFromAction(action, args, result) {
+        args = args || {};
+        const toTile = v => Math.floor(v / 32);
+        if (typeof args.x1 === "number" && typeof args.y1 === "number" && typeof args.x2 === "number" && typeof args.y2 === "number") {
+            return { kind: "rect", minX: toTile(Math.min(args.x1, args.x2)) - 1, minY: toTile(Math.min(args.y1, args.y2)) - 1,
+                maxX: toTile(Math.max(args.x1, args.x2)) + 1, maxY: toTile(Math.max(args.y1, args.y2)) + 1 };
+        }
+        const pos = (result && result.position && result.position.x >= 0) ? result.position
+            : (typeof args.x === "number" && typeof args.y === "number" ? args : null);
+        if (pos) {
+            const x = toTile(pos.x), y = toTile(pos.y);
+            // Track pieces and ride footprints span several tiles; give them a wider margin.
+            const r = (action === "trackplace" || action === "trackremove" || action === "rideentranceexitremove") ? 4 : 1;
+            const out = { kind: "rect", minX: x - r, minY: y - r, maxX: x + r, maxY: y + r };
+            if (typeof args.ride === "number") out.ride = args.ride;
+            return out;
+        }
+        if (typeof args.ride === "number") return { kind: "ride", ride: args.ride };
+        return { kind: "all" };
+    }
+
+    context.subscribe("action.execute", e => {
+        try {
+            if (e.result && e.result.error) return;
+            const action = String(e.action || "").toLowerCase();
+            recentActions.push({ action, args: e.args, player: e.player, cost: e.result ? e.result.cost : null, tick: date.ticksElapsed });
+            if (recentActions.length > RECENT_ACTIONS_MAX) recentActions.shift();
+            if (NON_MAP_ACTIONS.has(action)) return;
+            const change = changeFromAction(action, e.args, e.result);
+            change.action = action;
+            recordChange(change);
+        } catch (err) {
+            recordChange({ kind: "all", action: "error" });
+        }
+    });
+    context.subscribe("map.changed", () => {
+        mapSessionId = Math.floor(Math.random() * 1e9);
+        mapRevision = 0;
+        changeLog = [];
+    });
+
+    async function handleGetMapChanges(params) {
+        const since = params && typeof params.sinceRevision === "number" ? params.sinceRevision : -1;
+        const sessionId = params && params.sessionId;
+        const reset = { reset: true, revision: mapRevision, sessionId: mapSessionId, changes: [] };
+        if (sessionId !== mapSessionId || since < 0 || since > mapRevision) return reset;
+        const changes = changeLog.filter(c => c.rev > since);
+        if (since < mapRevision && (changes.length === 0 || changes[0].rev !== since + 1)) return reset;
+        return { reset: false, revision: mapRevision, sessionId: mapSessionId, changes };
+    }
+
+    async function handleGetRecentActions(params) {
+        const limit = params && typeof params.limit === "number" ? params.limit : 20;
+        return recentActions.slice(-limit);
     }
 
     // Trains only exist while a ride is open or testing; a closed ride reports 0.

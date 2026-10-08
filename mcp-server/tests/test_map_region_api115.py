@@ -4,7 +4,7 @@ import json
 import unittest
 from unittest.mock import MagicMock
 
-from openrct2_mcp.map_region import MAX_REGION_SIDE, get_elements_in_rect
+from openrct2_mcp.map_region import MAX_ELEMENTS_RECT_SIDE, get_elements_in_rect
 
 
 class GetElementsInRectTests(unittest.TestCase):
@@ -38,8 +38,8 @@ class GetElementsInRectTests(unittest.TestCase):
                 "bounds": {
                     "minX": 5,
                     "minY": 7,
-                    "maxX": 5 + MAX_REGION_SIDE - 1,
-                    "maxY": 7 + MAX_REGION_SIDE - 1,
+                    "maxX": 5 + MAX_ELEMENTS_RECT_SIDE - 1,
+                    "maxY": 7 + MAX_ELEMENTS_RECT_SIDE - 1,
                 },
             },
         )
