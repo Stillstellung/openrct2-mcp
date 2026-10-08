@@ -297,3 +297,16 @@ All of these were fixed after phase 2 (see the commit that follows this log):
   (Spiral Slide 53, Haunted House 1 38, Ferris Wheel 26) with zero good-value thoughts;
   cut their prices. Ride value decays with age, so old flat rides need cheaper tickets.
 - Park at Y3 June: 1,016 guests, rating 819, avg happiness 195, 31 rides/stalls.
+- **New intel tools, live** (run as scripts before the reconnect): the height-aware
+  connectivity agreed with the game on all 344 path elements including bridges and tunnels,
+  and the false gaps beside the tunnel disappeared. `guest_thought_summary` gave averages,
+  top thoughts, per-ride counts and concrete recommendations in one call (1,002 guests).
+  The thought-hotspot cells pinpointed dirt at the skywalk landing (x 72-79, y 40-47) and the
+  wooden coaster exit corridor (x 56-63); one zoned handyman each cleared both. Bug fixed on
+  the spot: guests riding a ride report x = -32768 and formed a bogus cell.
+- **Crowding** became the top complaint (305 -> 413 guests) as the park grew: almost all
+  east-side traffic squeezes through the x=62 corridor. Added a parallel lane on x=61 and a
+  second lane along y=28. Crowding thoughts still rise with guest count, but they did not
+  drag the rating.
+- Park at Y3 August: **rating 925** (best so far), 1,116 guests, avg happiness 212.6,
+  3 unhappy guests, $24k cash, 21 handymen, 6 security, 3 mechanics.
