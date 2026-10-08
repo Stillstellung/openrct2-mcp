@@ -13,6 +13,7 @@ from pyrct2.world._tile import Tile
 
 from openrct2_mcp.land_tools import find_open_land
 from openrct2_mcp.path_connectivity import assert_tile_adjacent_to_entrance_network
+from openrct2_mcp.tower_rides import is_tower_ride, tower_ride_message
 
 # Maximum surface baseZ mismatch between stall pad and adjacent guest path (8 = one land step).
 MAX_STALL_SURFACE_DELTA_Z = 8
@@ -402,6 +403,8 @@ def place_ride_at_best_tile(
     the nearest walkway to each of them when one is within ``connect_radius``.
     """
     obj = ride_object
+    if is_tower_ride(obj):
+        raise ValueError(tower_ride_message(obj))
 
     if is_stall:
         land = find_open_land(game, min_width=6, min_height=6, near_x=near_x, near_y=near_y)

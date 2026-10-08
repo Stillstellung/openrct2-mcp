@@ -115,10 +115,15 @@ def probe_coaster_design(
     target: dict[str, int],
 ) -> dict[str, Any]:
     spec = validate_design_spec(dict(design))
-    return ride_builder.call(
+    probe = ride_builder.call(
         "probeRideDesign",
         {"design": spec, "target": target},
     )
+    if isinstance(probe, dict) and probe.get("error"):
+        from openrct2_mcp.track_errors import explain_track_error
+
+        probe["error"] = explain_track_error(str(probe["error"]))
+    return probe
 
 
 def scan_coaster_site(

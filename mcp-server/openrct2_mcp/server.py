@@ -353,9 +353,13 @@ def place_flat_ride(
     direction: str = "NORTH",
 ) -> str:
     """Place a flat ride (e.g. MERRY_GO_ROUND) with entrance and exit tiles."""
+    from openrct2_mcp.tower_rides import is_tower_ride, tower_ride_message
+
     with game_context() as game:
         ensure_paused(game)
         obj = _resolve_ride_object(ride_object, game)
+        if is_tower_ride(obj):
+            raise ValueError(tower_ride_message(obj))
         ride = game.rides.place_flat_ride(
             obj=obj,
             tile=Tile(tile_x, tile_y),
@@ -413,6 +417,53 @@ def find_stall_sites_tool(
         return _json(find_stall_sites(game, near_x=near_x, near_y=near_y, max_results=max_results))
 
 
+def _place_path_3d(
+    game: RCT2,
+    action: str,
+    from_x, from_y, to_x, to_y, tile_x, tile_y,
+    height: int | None,
+    end_height: int | None,
+    slope: str | None,
+    queue: bool,
+    surface_info,
+    excavate: bool,
+) -> dict:
+    """Elevated, sloped or underground paths via path_build."""
+    from openrct2_mcp.path_build import build_path_plan, line_direction, parse_direction, plan_ramp
+    from openrct2_mcp.path_connectivity import analyze_path_connectivity, summarize_connectivity
+
+    def ground_z(x: int, y: int) -> int:
+        raw = game._query("get_tile", {"x": x, "y": y})
+        surf = next((e for e in raw.get("elements", []) if e.get("type") == "surface"), {})
+        return int(surf.get("baseZ", 0)) // 8
+
+    if action == "place_tile":
+        if tile_x is None or tile_y is None:
+            raise ValueError("place_tile requires tile_x and tile_y")
+        z = height if height is not None else ground_z(tile_x, tile_y)
+        plan = [{"x": tile_x, "y": tile_y, "z": z, "slope": parse_direction(slope)}]
+    else:
+        if None in (from_x, from_y, to_x, to_y):
+            raise ValueError(f"{action} requires from_x, from_y, to_x, to_y")
+        start = height if height is not None else ground_z(from_x, from_y)
+        if action == "place_ramp":
+            if end_height is None:
+                raise ValueError("place_ramp requires end_height")
+            plan = plan_ramp(from_x, from_y, to_x, to_y, start, end_height)
+        else:
+            line_direction(from_x, from_y, to_x, to_y)
+            x1, x2 = sorted([from_x, to_x])
+            y1, y2 = sorted([from_y, to_y])
+            plan = [
+                {"x": x, "y": y, "z": start, "slope": None}
+                for x in range(x1, x2 + 1) for y in range(y1, y2 + 1)
+            ]
+    result = build_path_plan(game, plan, queue=queue, surface_info=surface_info, excavate=excavate)
+    log_action("place_path_3d", {"action": action, "tiles": len(plan), "dug": len(result["dug_tiles"])})
+    result["connectivity"] = summarize_connectivity(analyze_path_connectivity(game))
+    return result
+
+
 @mcp.tool()
 def manage_paths(
     action: str,
@@ -426,8 +477,12 @@ def manage_paths(
     addition: str | None = None,
     repair_gaps: bool = True,
     surface: str | None = None,
+    height: int | None = None,
+    end_height: int | None = None,
+    slope: str | None = None,
+    excavate: bool = True,
 ) -> str:
-    """Place or remove paths. action: place_line | place_tile | place_addition | remove_tile | remove_line | list_surfaces.
+    """Place or remove paths. action: place_line | place_tile | place_ramp | place_addition | remove_tile | remove_line | list_surfaces.
 
     place_line / place_tile also fill one-tile gaps beside the new tiles. Pass
     repair_gaps=false for exact shapes (hollow squares, lettering) where those
@@ -436,12 +491,32 @@ def manage_paths(
     surface: footpath surface for place_line / place_tile, by identifier or
     name (e.g. "red and brown tiled"); omit for the scenario default.
     list_surfaces shows the surfaces loaded in this park.
+
+    Bridges, ramps and tunnels (heights are tile_z = baseZ // 8, like coaster tools):
+    - place_tile / place_line with height: flat path at that height, above the
+      ground (bridge deck) or below it (tunnel). slope (WEST/NORTH/EAST/SOUTH)
+      on place_tile makes a ramp tile rising toward that side by 2 tile_z.
+    - place_ramp from -> to (straight): starts at height, changes 2 tile_z per
+      tile until end_height, then stays flat. Going below ground digs a cutting
+      at the tunnel mouth when excavate=true (lowers land on those tiles only).
+    Guests can walk under a bridge deck 4+ tile_z above their path.
+    remove_tile / remove_line remove paths at every height (bridges and tunnels
+    too), or only at ``height`` when given.
     """
     with game_context() as game:
         if action == "list_surfaces":
             return _json(list_footpath_surfaces(game))
         ensure_paused(game)
         surface_info = resolve_footpath_surface(game, surface) if surface else None
+        if action == "place_ramp" or (
+            action in ("place_tile", "place_line") and (height is not None or slope is not None)
+        ):
+            return _json(
+                _place_path_3d(
+                    game, action, from_x, from_y, to_x, to_y, tile_x, tile_y,
+                    height, end_height, slope, queue, surface_info, excavate,
+                )
+            )
         if action == "remove_tile":
             if tile_x is None or tile_y is None:
                 raise ValueError("remove_tile requires tile_x and tile_y")
@@ -450,8 +525,11 @@ def manage_paths(
                 summarize_connectivity,
             )
 
+            from openrct2_mcp.path_build import remove_paths_at
+
             before = summarize_connectivity(analyze_path_connectivity(game))
-            game.paths.remove(Tile(tile_x, tile_y))
+            if not remove_paths_at(game, tile_x, tile_y, height):
+                raise ValueError(f"No footpath at ({tile_x},{tile_y})" + (f" z{height}" if height is not None else ""))
             after = summarize_connectivity(analyze_path_connectivity(game))
             log_action("remove_path_tile", {"tile": [tile_x, tile_y]})
             return _json(
@@ -473,11 +551,12 @@ def manage_paths(
             removed = 0
             x1, x2 = sorted([from_x, to_x])
             y1, y2 = sorted([from_y, to_y])
+            from openrct2_mcp.path_build import remove_paths_at
+
             for tx in range(x1, x2 + 1):
                 for ty in range(y1, y2 + 1):
                     try:
-                        game.paths.remove(Tile(tx, ty))
-                        removed += 1
+                        removed += remove_paths_at(game, tx, ty, height)
                     except Exception:
                         pass
             log_action("remove_path_line", {"from": [from_x, from_y], "to": [to_x, to_y], "removed": removed})
@@ -2232,10 +2311,16 @@ def coaster_fit_design_tool(
     envelope_json: str = "",
     test: bool = True,
     save_as: str = "",
+    excavate: bool = False,
 ) -> str:
     """Fit-and-fix pipeline: lint -> in-game probe -> place + entrance/exit -> test ride.
     Fails fast with structured per-stage feedback for iterative design fixes.
-    save_as: optionally persist the validated design as a named template."""
+    Track errors are translated (status 2 = not allowed for this ride/piece,
+    9 = land surface in the way).
+    save_as: optionally persist the validated design as a named template.
+    excavate: when a piece fails because the land is in the way (status 9), lower
+    the land on its tiles to the track base and retry (bounded); cuts are
+    reported as dug_tiles. Use for tunnels and track that surfaces from below."""
     from openrct2_mcp.design_library import fit_coaster_design
 
     design = json.loads(design_json)
@@ -2252,8 +2337,12 @@ def coaster_fit_design_tool(
             envelope=envelope,
             test=test,
             save_as=save_as or None,
+            excavate=excavate,
         )
-        log_action("coaster_fit_design", {"stage": result.get("stage"), "ok": result.get("ok")})
+        log_action(
+            "coaster_fit_design",
+            {"stage": result.get("stage"), "ok": result.get("ok"), "dug": len(result.get("dug_tiles") or [])},
+        )
         return _json(result)
 
 
@@ -2490,6 +2579,53 @@ def place_ride_at_best_tile_tool(
                 connect_paths=connect_paths,
             )
         )
+
+
+@mcp.tool()
+def build_tower_ride_tool(
+    ride_object: str,
+    tile_x: int,
+    tile_y: int,
+    sections: int = 12,
+    entrance_side: str = "SOUTH",
+    confirm_cost: bool = True,
+) -> str:
+    """Build a tower ride (Observation Tower, Lift, Roto-Drop, Launched Freefall).
+
+    Tower rides are track, not flat rides: a 3x3 Tower Base centred on (tile_x,
+    tile_y) on the land surface, then `sections` Tower Sections stacked on it.
+    Entrance and exit go on two tiles of entrance_side (WEST=-x, NORTH=+y,
+    EAST=+x, SOUTH=-y) just outside the base. The 5x5 area around the tile should
+    be flat, owned and clear. confirm_cost=false returns the plan without building.
+    The ride is left closed: connect paths, then open_ride.
+    """
+    from openrct2_mcp.tower_rides import TOWER_RIDE_TYPES, build_tower_ride, is_tower_ride
+
+    with game_context() as game:
+        ensure_paused(game)
+        obj = _resolve_ride_object(ride_object, game)
+        if not is_tower_ride(obj):
+            raise ValueError(
+                f"{obj.name!r} ({obj.ride_type}) is not a tower ride; "
+                f"tower types: {', '.join(TOWER_RIDE_TYPES)}"
+            )
+        loaded = game._query("get_objects", {"type": "ride"})
+        index = next((o["index"] for o in loaded if o["identifier"] == obj.identifier), None)
+        if index is None:
+            raise ValueError(f"Ride object {obj.identifier!r} is not loaded in this scenario")
+        result = build_tower_ride(
+            game,
+            ride_type=TOWER_RIDE_TYPES[obj.ride_type],
+            ride_object_index=int(index),
+            tile_x=tile_x,
+            tile_y=tile_y,
+            sections=sections,
+            entrance_side=entrance_side,
+            build=confirm_cost,
+        )
+        if confirm_cost:
+            log_action("build_tower_ride", {"ride_id": result.get("ride_id"), "built": result.get("built")})
+        return _json(result)
 
 
 @mcp.tool()

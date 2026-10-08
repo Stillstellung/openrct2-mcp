@@ -10,6 +10,7 @@ import json
 import re
 import time
 from collections import deque
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,19 @@ from pyrct2.client import RCT2
 
 from openrct2_mcp.coaster_design import place_coaster_design, validate_design_spec
 from openrct2_mcp.connection import RideBuilderClient, ensure_paused, ensure_unpaused
-from openrct2_mcp.design_lint import STATION_TYPES, lint_design, simulate_design
+from openrct2_mcp.design_lint import (
+    STATION_TYPES,
+    lint_design,
+    load_segments,
+    piece_footprint_tiles,
+    simulate_design,
+)
+from openrct2_mcp.track_errors import (
+    STATUS_NO_CLEARANCE,
+    explain_track_error,
+    parse_track_failure,
+    track_error_hint,
+)
 
 TEST_POLL_SECONDS = 5
 TEST_POLL_ATTEMPTS = 12
@@ -61,10 +74,64 @@ def _guest_side_blocked(game: RCT2, guest_x: int, guest_y: int, z: int) -> bool:
 _GUEST_HEADROOM_TILE_Z = _GUEST_HEADROOM_Z // 8
 
 
-def _design_layout(spec: dict[str, Any]) -> tuple[set[tuple[int, int]], set[tuple[int, int]]]:
+# A track tile's body reaches this many tile_z above its base. When that top is at
+# or below the land surface the track is buried (a tunnel) and guests walk over it.
+_TRACK_CLEARANCE_TILE_Z = 3
+
+# Surface tile_z per (x, y): a dict, or a callable returning None when unknown.
+GroundZ = dict[tuple[int, int], int] | Callable[[int, int], "int | None"]
+
+
+def _ground_lookup(ground_z: GroundZ | None) -> Callable[[int, int], int | None] | None:
+    if ground_z is None:
+        return None
+    if callable(ground_z):
+        return ground_z
+    return lambda x, y: ground_z.get((x, y))
+
+
+def _surface_element(game: RCT2, x: int, y: int) -> dict[str, Any] | None:
+    raw = game._query("get_tile", {"x": x, "y": y})
+    return next((e for e in raw.get("elements", []) if e.get("type") == "surface"), None)
+
+
+def game_ground_z(game: RCT2) -> Callable[[int, int], int | None]:
+    """Cached surface tile_z lookup (surface baseZ // 8) for the enclosure checks."""
+    cache: dict[tuple[int, int], int | None] = {}
+
+    def lookup(x: int, y: int) -> int | None:
+        if (x, y) not in cache:
+            try:
+                surface = _surface_element(game, x, y)
+                cache[(x, y)] = int(surface["baseZ"]) // 8 if surface else None
+            except Exception:
+                cache[(x, y)] = None
+        return cache[(x, y)]
+
+    return lookup
+
+
+def _piece_tile_bases(sim: dict[str, Any]) -> list[tuple[int, int, int, int]]:
+    """(piece index, tile x, tile y, tile base_z) for every tile of every simulated piece."""
+    segments = load_segments()
+    out: list[tuple[int, int, int, int]] = []
+    for st in sim["states"]:
+        seg = segments.get(int(st["track_type"])) or {}
+        elems = seg.get("elements") or [{"x": 0, "y": 0, "z": 0}]
+        tiles = piece_footprint_tiles(st["x"], st["y"], st["direction"], seg)
+        for (tx, ty), elem in zip(tiles, elems):
+            out.append((st["index"], tx, ty, int(st["base_z"]) + int(elem.get("z", 0)) // 8))
+    return out
+
+
+def _design_layout(
+    spec: dict[str, Any], ground_z: GroundZ | None = None
+) -> tuple[set[tuple[int, int]], set[tuple[int, int]]]:
     """(all track tiles, low track tiles guests cannot walk under) for a placed spec.
 
-    Returns empty sets when the spec cannot be simulated (no enclosure checks).
+    With ``ground_z`` (surface tile_z per tile), low track buried below the land
+    surface is left out of both sets: guests walk over it. Returns empty sets when
+    the spec cannot be simulated (no enclosure checks).
     """
     try:
         sim = simulate_design(spec)
@@ -72,17 +139,25 @@ def _design_layout(spec: dict[str, Any]) -> tuple[set[tuple[int, int]], set[tupl
         return set(), set()
     if not sim["states"]:
         return set(), set()
-    base_by_index = {st["index"]: int(st["base_z"]) for st in sim["states"]}
     station_z = int(sim["states"][0]["base_z"])
-    footprint = sim["footprint"]
-    low = {
-        tile
-        for tile, indices in footprint.items()
-        if any(
-            base_by_index.get(i, station_z) < station_z + _GUEST_HEADROOM_TILE_Z for i in indices
-        )
-    }
-    return set(footprint), low
+    low_limit = station_z + _GUEST_HEADROOM_TILE_Z
+    lookup = _ground_lookup(ground_z)
+    bases_by_tile: dict[tuple[int, int], list[int]] = {}
+    for _, tx, ty, base in _piece_tile_bases(sim):
+        bases_by_tile.setdefault((tx, ty), []).append(base)
+    track: set[tuple[int, int]] = set()
+    low: set[tuple[int, int]] = set()
+    for tile, bases in bases_by_tile.items():
+        if lookup is not None and min(bases) < low_limit:
+            ground = lookup(*tile)
+            if ground is not None:
+                bases = [b for b in bases if b + _TRACK_CLEARANCE_TILE_Z > ground]
+                if not bases:
+                    continue  # buried: a tunnel under walkable ground
+        track.add(tile)
+        if any(b < low_limit for b in bases):
+            low.add(tile)
+    return track, low
 
 
 # Guest-side access levels, best first.
@@ -189,19 +264,25 @@ def _guest_tile_for(
     return tx, ty, guest[0], guest[1]
 
 
-def _remove_blocked_entrance_exit(game: RCT2, ride_id: int, spec: dict[str, Any]) -> list[str]:
+def _remove_blocked_entrance_exit(
+    game: RCT2, ride_id: int, spec: dict[str, Any], ground_z: GroundZ | None = None
+) -> list[str]:
     """Remove an auto-placed entrance/exit whose guest side is blocked; return what was removed.
 
     The guest side is the neighbour opposite the station tile the entrance touches.
     It counts as blocked when occupied at path height, when it is enclosed by the
     ride's own low track (e.g. the lane inside an out-and-back), or when it only
     reaches open ground under the track while another station side opens directly.
+    Track buried below the land surface (``ground_z``, read from the game by
+    default) does not block guests.
     """
     from pyrct2._generated.enums import RideStatus
 
     station_world = _station_world_tiles(spec)
     station_tiles = {(x, y) for x, y, _ in station_world}
-    track_tiles, low_tiles = _design_layout(spec)
+    track_tiles, low_tiles = _design_layout(
+        spec, game_ground_z(game) if ground_z is None else ground_z
+    )
     st = _ride_station_raw(game, ride_id)
     # Tiles already holding this ride's entrance or exit are not free sides.
     occupied = {
@@ -301,11 +382,15 @@ def _fix_entrance_facing(game: RCT2, ride_id: int, spec: dict[str, Any]) -> list
     return fixed
 
 
-def _enclosure_warnings(game: RCT2, ride_id: int, spec: dict[str, Any]) -> list[str]:
+def _enclosure_warnings(
+    game: RCT2, ride_id: int, spec: dict[str, Any], ground_z: GroundZ | None = None
+) -> list[str]:
     """Warn for each entrance/exit whose guest side cannot reach open ground directly."""
     try:
         station_tiles = {(x, y) for x, y, _ in _station_world_tiles(spec)}
-        track_tiles, low_tiles = _design_layout(spec)
+        track_tiles, low_tiles = _design_layout(
+            spec, game_ground_z(game) if ground_z is None else ground_z
+        )
         st = _ride_station_raw(game, ride_id)
     except Exception:
         return []
@@ -352,12 +437,14 @@ def ensure_entrance_exit(
     placeRideDesign's automatic placement can fail silently (e.g. one station side
     fully covered by existing footpaths) which leaves the ride stuck closed. It can
     also put an entrance where low track blocks the guest side; those are moved.
+    Track buried below the land surface does not count as blocking.
     """
+    ground_z = game_ground_z(game)
     try:
         turned = _fix_entrance_facing(game, ride_id, spec)
     except Exception as exc:
         turned = [f"facing check failed: {exc}"]
-    relocated = _remove_blocked_entrance_exit(game, ride_id, spec)
+    relocated = _remove_blocked_entrance_exit(game, ride_id, spec, ground_z)
     state = _ride_entrance_exit_state(game, ride_id)
     if state["entrance"] and state["exit"]:
         return {
@@ -365,7 +452,7 @@ def ensure_entrance_exit(
             **state,
             "method": "auto",
             "facing_fixes": turned,
-            "warnings": _enclosure_warnings(game, ride_id, spec),
+            "warnings": _enclosure_warnings(game, ride_id, spec, ground_z),
         }
 
     if not relocated:
@@ -378,7 +465,7 @@ def ensure_entrance_exit(
                     "ok": True,
                     **state,
                     "method": "plugin_retry",
-                    "warnings": _enclosure_warnings(game, ride_id, spec),
+                    "warnings": _enclosure_warnings(game, ride_id, spec, ground_z),
                 }
         except Exception:
             pass
@@ -390,7 +477,7 @@ def ensure_entrance_exit(
     placed_notes: list[str] = list(relocated)
     station_world = _station_world_tiles(spec)
     station_tiles = {(x, y) for x, y, _ in station_world}
-    track_tiles, low_tiles = _design_layout(spec)
+    track_tiles, low_tiles = _design_layout(spec, ground_z)
     side_rank = {
         (tx, ty): _ACCESS_RANK[
             guest_tile_access(
@@ -435,7 +522,7 @@ def ensure_entrance_exit(
         **state,
         "method": "manual_fallback",
         "placed": placed_notes,
-        "warnings": _enclosure_warnings(game, ride_id, spec),
+        "warnings": _enclosure_warnings(game, ride_id, spec, ground_z),
     }
 
 
@@ -584,7 +671,13 @@ def place_coaster_template(
             },
         )
         if isinstance(probe, dict) and not probe.get("ok", True):
-            return {"placed": False, "stage": "probe", "probe": probe, "template": doc["slug"]}
+            error = str(probe.get("error", ""))
+            probe["error"] = explain_track_error(error)
+            out = {"placed": False, "stage": "probe", "probe": probe, "template": doc["slug"]}
+            hint = track_error_hint(error)
+            if hint:
+                out["hint"] = hint
+            return out
 
     placed = place_coaster_design(
         ride_builder,
@@ -596,6 +689,67 @@ def place_coaster_template(
         place_entrance_exit=True,
     )
     return {"placed": True, "template": doc["slug"], "placement": placed}
+
+
+# Excavation bounds for fit_coaster_design(excavate=True).
+MAX_DIG_ROUNDS = 12
+MAX_DUG_TILES = 40
+# Track this deep below the surface (base <= ground - 6) clears the land without a
+# cut, as with tunnel paths; shallower track pokes through and needs one.
+_BURIED_CLEAR_DEPTH = 6
+
+
+def dig_for_track_failure(
+    game: RCT2,
+    spec_at_target: dict[str, Any],
+    error_text: str,
+    dug: list[list[int]],
+    dig_errors: list[str] | None = None,
+) -> bool:
+    """Lower the land under a piece that failed with the terrain code; True if any tile dug.
+
+    Only acts on status 9 (land surface in the way). The failing piece's tiles come
+    from simulate_design; each tile whose surface is above the piece's base there is
+    lowered to that base, rounded down to an even tile_z (land heights are even).
+    Tiles deep enough to clear the surface are skipped unless none would be dug
+    otherwise. Appends [x, y, tile_z] to ``dug``.
+    """
+    failure = parse_track_failure(error_text)
+    if failure is None or failure["code"] != STATUS_NO_CLEARANCE:
+        return False
+    try:
+        sim = simulate_design(spec_at_target)
+    except Exception:
+        return False
+    tiles = [(x, y, b) for i, x, y, b in _piece_tile_bases(sim) if i == failure["piece_index"]]
+    candidates = []
+    for x, y, base in tiles:
+        surface = _surface_element(game, x, y)
+        if not surface:
+            continue
+        ground = int(surface.get("baseZ", 0)) // 8
+        top = ground + (2 if surface.get("slope", 0) else 0)
+        if base < top:
+            candidates.append((x, y, base, ground))
+    shallow = [c for c in candidates if c[2] > c[3] - _BURIED_CLEAR_DEPTH]
+    did_dig = False
+    for x, y, base, _ in shallow or candidates:
+        if len(dug) >= MAX_DUG_TILES:
+            break
+        height = base - base % 2
+        if any(d[0] == x and d[1] == y and d[2] <= height for d in dug):
+            continue  # already cut this deep; digging again would change nothing
+        try:
+            game.execute(
+                "landsetheight", {"x": x * 32, "y": y * 32, "height": height, "style": 0}
+            )
+        except Exception as exc:
+            if dig_errors is not None:
+                dig_errors.append(f"({x},{y}) to z{height}: {str(exc)[:120]}")
+            continue
+        dug.append([x, y, height])
+        did_dig = True
+    return did_dig
 
 
 def fit_coaster_design(
@@ -610,11 +764,15 @@ def fit_coaster_design(
     envelope: dict[str, Any] | None = None,
     test: bool = True,
     save_as: str | None = None,
+    excavate: bool = False,
 ) -> dict[str, Any]:
     """Lint -> probe -> place -> test pipeline with structured failure feedback.
 
     Cheap-first ordering: offline lint costs zero bridge calls; the in-game
-    probe and placement are single batch round-trips each.
+    probe and placement are single batch round-trips each. With ``excavate``, a
+    piece that fails because the land surface is in the way gets its tiles' land
+    lowered to the track base and the stage is retried (see dig_for_track_failure);
+    the cuts are reported as ``dug_tiles`` [[x, y, tile_z], ...].
     """
     t0 = time.monotonic()
     timings: dict[str, int] = {}
@@ -637,47 +795,83 @@ def fit_coaster_design(
         }
 
     ensure_paused(game)
-    t1 = time.monotonic()
-    try:
-        probe = ride_builder.call(
-            "probeRideDesign",
-            {
-                "design": spec,
-                "target": {"x": tile_x, "y": tile_y, "z": tile_z, "direction": direction % 4},
-            },
+    target = {"x": tile_x, "y": tile_y, "z": tile_z, "direction": direction % 4}
+    dug: list[list[int]] = []
+    dig_errors: list[str] = []
+
+    def dig(error_text: str, attempt: int) -> bool:
+        return (
+            excavate
+            and attempt < MAX_DIG_ROUNDS
+            and dig_for_track_failure(game, spec_for_lint, error_text, dug, dig_errors)
         )
-    except Exception as exc:
-        timings["probe_ms"] = int((time.monotonic() - t1) * 1000)
-        return {
+
+    def failure(stage: str, rule: str, error_text: str, default_hint: str, **extra: Any):
+        out = {
             "ok": False,
-            "stage": "probe",
-            "errors": [{"rule": "probe_failed", "detail": str(exc)}],
+            "stage": stage,
+            "errors": [{"rule": rule, "detail": explain_track_error(error_text)[:500]}],
             "warnings": lint["warnings"],
+            **extra,
             "timings": timings,
-            "hint": "shift the origin, rotate, or reduce footprint; envelope clear_rects are good anchors",
+            "hint": track_error_hint(error_text) or default_hint,
         }
+        if excavate:
+            out["dug_tiles"] = dug
+            if dig_errors:
+                out["dig_errors"] = dig_errors
+        return out
+
+    t1 = time.monotonic()
+    for attempt in range(MAX_DIG_ROUNDS + 1):
+        try:
+            probe = ride_builder.call("probeRideDesign", {"design": spec, "target": target})
+        except Exception as exc:
+            if dig(str(exc), attempt):
+                continue
+            timings["probe_ms"] = int((time.monotonic() - t1) * 1000)
+            return failure(
+                "probe",
+                "probe_failed",
+                str(exc),
+                "shift the origin, rotate, or reduce footprint; envelope clear_rects are good anchors",
+            )
+        if isinstance(probe, dict) and not probe.get("ok", True):
+            error_text = str(probe.get("error", ""))
+            if dig(error_text, attempt):
+                continue
+            timings["probe_ms"] = int((time.monotonic() - t1) * 1000)
+            probe["error"] = explain_track_error(error_text)
+            return failure(
+                "probe",
+                "probe_unfit",
+                error_text,
+                "probe placed pieces until failure; adjust the failing piece or move the origin",
+                probe=probe,
+            )
+        break
     timings["probe_ms"] = int((time.monotonic() - t1) * 1000)
-    if isinstance(probe, dict) and not probe.get("ok", True):
-        return {
-            "ok": False,
-            "stage": "probe",
-            "errors": [{"rule": "probe_unfit", "detail": str(probe.get("error", ""))[:500]}],
-            "warnings": lint["warnings"],
-            "probe": probe,
-            "timings": timings,
-            "hint": "probe placed pieces until failure — adjust the failing piece or move the origin",
-        }
 
     t2 = time.monotonic()
-    placement = place_coaster_design(
-        ride_builder,
-        spec,
-        tile_x=tile_x,
-        tile_y=tile_y,
-        tile_z=tile_z,
-        direction=direction,
-        place_entrance_exit=True,
-    )
+    for attempt in range(MAX_DIG_ROUNDS + 1):
+        try:
+            placement = place_coaster_design(
+                ride_builder,
+                spec,
+                tile_x=tile_x,
+                tile_y=tile_y,
+                tile_z=tile_z,
+                direction=direction,
+                place_entrance_exit=True,
+            )
+            break
+        except Exception as exc:
+            if dig(str(exc), attempt):
+                continue
+            timings["place_ms"] = int((time.monotonic() - t2) * 1000)
+            return failure(
+                "place", "place_failed", str(exc), "adjust the failing piece or move the origin"
+            )
     timings["place_ms"] = int((time.monotonic() - t2) * 1000)
     ride_id = placement.get("ride_id") if isinstance(placement, dict) else None
     if ride_id is None:
@@ -727,5 +921,6 @@ def fit_coaster_design(
         + [{"rule": "entrance_enclosed", "detail": w} for w in entrance_exit.get("warnings", [])],
         "lint_stats": lint["stats"],
         "saved": saved,
+        **({"dug_tiles": dug} if excavate else {}),
         "timings": {**timings, "total_ms": int((time.monotonic() - t0) * 1000)},
     }

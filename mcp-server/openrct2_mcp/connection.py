@@ -12,6 +12,8 @@ from typing import Any, Generator
 from pyrct2.client import RCT2
 from pyrct2.connection import DEFAULT_HOST, Connection as BridgeConnection
 
+from openrct2_mcp.track_errors import explain_track_error
+
 DEFAULT_BRIDGE_PORT = int(os.environ.get("OPENRCT2_BRIDGE_PORT", "20020"))
 DEFAULT_RIDE_BUILDER_PORT = int(os.environ.get("OPENRCT2_RIDE_BUILDER_PORT", "20021"))
 BRIDGE_TIMEOUT = float(os.environ.get("OPENRCT2_BRIDGE_TIMEOUT", "30"))
@@ -140,7 +142,9 @@ class RideBuilderClient:
     def call(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
         response = self.send(endpoint, params)
         if not response.get("success"):
-            raise ConnectionError(response.get("error", "Ride-builder request failed"))
+            raise ConnectionError(
+                explain_track_error(str(response.get("error", "Ride-builder request failed")))
+            )
         return response.get("payload")
 
     def close(self) -> None:
