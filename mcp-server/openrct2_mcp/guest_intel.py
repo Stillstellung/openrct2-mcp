@@ -48,6 +48,20 @@ RIDE_THOUGHTS = frozenset(
 
 
 def _ride_tile_map(game: RCT2, ride_builder: RideBuilderClient) -> dict[int, list[int]]:
+    """Ride id -> a representative tile (entrance if any, else footprint centre)."""
+    try:
+        from openrct2_mcp.connection import SESSION
+        from openrct2_mcp.ride_index import build_ride_index
+
+        out = {}
+        for ride, loc in build_ride_index(SESSION.map).items():
+            tile = loc.entrances[0].tile if loc.entrances else loc.centre
+            if tile is not None:
+                out[ride] = list(tile)
+        if out:
+            return out
+    except Exception:  # noqa: BLE001 - fall back to station lookups
+        pass
     mapping: dict[int, list[int]] = {}
     for entry in ride_builder.call("listAllRides"):
         raw = get_ride_raw(game, entry["id"])

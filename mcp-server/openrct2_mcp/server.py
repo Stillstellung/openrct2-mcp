@@ -227,7 +227,7 @@ def inspect_area_at_tile(
     Use when planning paths, queues, stalls, or coasters at a location.
     """
     with game_context() as game:
-        ctx = area_context(game, SESSION.ride_builder, tile_x, tile_y, radius)
+        ctx = area_context(game, SESSION.ride_builder, tile_x, tile_y, radius, model=SESSION.map)
         if not include_screenshot:
             return _json(ctx)
         try:
@@ -717,7 +717,57 @@ def get_ride(ride_id: int) -> str:
             raise ValueError(f"Ride {ride_id} not found")
         summary = ride_summary_from_raw(raw)
         rb_rows = load_ride_builder_maintenance_index(SESSION.ride_builder)
-        return _json(merge_ride_builder_maintenance(summary, rb_rows.get(ride_id)))
+        summary = merge_ride_builder_maintenance(summary, rb_rows.get(ride_id))
+        location = _ride_index().get(ride_id)
+        if location is not None:
+            loc = location.to_dict()
+            summary["location"] = {k: loc[k] for k in ("kind", "bbox", "centre", "entrances", "exits", "queue_length", "issues")}
+        return _json(summary)
+
+
+def _ride_index():
+    from openrct2_mcp.ride_index import build_ride_index
+
+    names = {r["id"]: r["name"] for r in SESSION.ride_builder.call("listAllRides")}
+    return build_ride_index(SESSION.map, names)
+
+
+@mcp.tool()
+def get_ride_location_tool(ride_id: int, include_tiles: bool = False) -> str:
+    """Where a ride is: footprint bbox, entrance/exit tiles with facing, queue and joined paths.
+
+    Doors report ``facing`` (direction toward the station), ``guest_side`` (the tile
+    guests use) and the path node there. ``queue`` is walked along the queue's path
+    edges; ``joins_path_at`` is the first regular path it reaches. ``issues`` lists
+    missing doors or doors with no path. Heights are tile_z.
+    """
+    with game_context():
+        location = _ride_index().get(ride_id)
+        if location is None:
+            raise ValueError(f"Ride {ride_id} has no track, entrance or exit on the map")
+        return _json(location.to_dict(full=include_tiles))
+
+
+@mcp.tool()
+def list_ride_locations_tool(only_issues: bool = False) -> str:
+    """Every ride's bbox, centre, doors and queue length in one call (from the cached map).
+
+    only_issues=true lists just rides with a missing door, a door with no path, or a
+    queue that never reaches a regular path.
+    """
+    with game_context():
+        rows = []
+        for loc in sorted(_ride_index().values(), key=lambda r: r.ride):
+            d = loc.to_dict()
+            if only_issues and not d["issues"]:
+                continue
+            rows.append({
+                "ride": d["ride"], "name": d["name"], "kind": d["kind"], "bbox": d["bbox"], "centre": d["centre"],
+                "entrance": d["entrances"][0]["tile"] if d["entrances"] else None,
+                "exit": d["exits"][0]["tile"] if d["exits"] else None,
+                "queue_length": d["queue_length"], "issues": d["issues"],
+            })
+        return _json(rows)
 
 
 @mcp.tool()

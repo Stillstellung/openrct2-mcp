@@ -21,8 +21,17 @@ def _station_tile(station: dict) -> tuple[int, int] | None:
     return point["x"] // 32, point["y"] // 32
 
 
-def rides_near(game: RCT2, ride_builder: RideBuilderClient, tx: int, ty: int, radius: int) -> list[dict]:
-    """Rides with a station entrance/start within radius tiles of (tx, ty)."""
+def rides_near(game: RCT2, ride_builder: RideBuilderClient, tx: int, ty: int, radius: int, model=None) -> list[dict]:
+    """Rides with any footprint tile or door within radius tiles of (tx, ty), nearest first.
+
+    Uses the ride index when a map model is given; otherwise falls back to each
+    ride's first station entrance (one tile per ride).
+    """
+    if model is not None:
+        from openrct2_mcp.ride_index import build_ride_index, rides_near as index_rides_near
+
+        names = {r["id"]: r["name"] for r in ride_builder.call("listAllRides")}
+        return index_rides_near(build_ride_index(model, names), tx, ty, radius)
     nearby: list[dict] = []
     for entry in ride_builder.call("listAllRides"):
         raw = get_ride_raw(game, entry["id"])
@@ -152,10 +161,11 @@ def area_context(
     tile_x: int,
     tile_y: int,
     radius: int = 12,
+    model=None,
 ) -> dict:
     """Textual spatial summary for AI planning near a tile."""
     grid, path_stats = footpath_grid(game, tile_x, tile_y, radius)
-    nearby = rides_near(game, ride_builder, tile_x, tile_y, radius * 2)
+    nearby = rides_near(game, ride_builder, tile_x, tile_y, radius * 2, model=model)
 
     try:
         tile_data = game.world.get_tile(Tile(tile_x, tile_y))
