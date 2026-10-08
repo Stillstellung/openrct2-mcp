@@ -295,8 +295,11 @@ def theme_ride(
 
 
 def demolish_ride(game: RCT2, ride_id: int) -> dict:
-    _ride_entity(game, ride_id).demolish()
-    return {"demolished": True, "ride_id": ride_id}
+    """Demolish via the raw action (the pyrct2 Ride model rejects some live rides,
+    e.g. fractional totalAirTime). Reports the refund in money units ($1 = 10)."""
+    before = game.state.park_cash()
+    game.execute("ridedemolish", {"ride": ride_id, "modifyType": 0})
+    return {"demolished": True, "ride_id": ride_id, "refund": game.state.park_cash() - before}
 
 
 def ride_status_is_open(status: object) -> bool:

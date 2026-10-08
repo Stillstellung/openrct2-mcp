@@ -677,8 +677,20 @@ function main() {
         const ride = map.getRide(rideId);
         if (!ride) throw new Error("Ride not found");
         const carsPerTrain = [];
+        const heads = [];
         (ride.vehicles || []).forEach(headId => {
             if (headId === 65535 || headId == null) return;
+            const head = map.getEntity(headId);
+            if (head) {
+                // Where each train is: tile, height (tile_z), speed and state, for stall diagnosis.
+                heads.push({
+                    tile: [Math.floor(head.x / 32), Math.floor(head.y / 32)], z: Math.floor(head.z / 8),
+                    velocity: head.velocity, acceleration: head.acceleration, status: head.status,
+                    trackType: head.trackLocation ? undefined : undefined,
+                    trackLocation: head.trackLocation ? { x: Math.floor(head.trackLocation.x / 32), y: Math.floor(head.trackLocation.y / 32), z: Math.floor(head.trackLocation.z / 8), direction: head.trackLocation.direction } : null,
+                    poweredMaxSpeed: head.poweredMaxSpeed,
+                });
+            }
             let cars = 0;
             let id = headId;
             while (id != null && cars < 64) {
@@ -695,6 +707,7 @@ function main() {
             mode: ride.mode,
             trains: carsPerTrain.length,
             carsPerTrain,
+            heads,
         };
     }
 

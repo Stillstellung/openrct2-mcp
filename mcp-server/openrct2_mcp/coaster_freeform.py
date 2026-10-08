@@ -518,7 +518,7 @@ def terrain_from_model(
         if ride_id is not None and any(tr.ride == ride_id for tr in t.track):
             parts = [tr.top for tr in t.track if tr.ride != ride_id]
             parts += [s.top for s in t.scenery]
-            parts += [p.z + PATH_CLEARANCE_Z for p in t.paths]
+            parts += [p.z + PATH_CLEARANCE_Z + (2 if p.slope_direction is not None else 0) for p in t.paths]
             parts += [e.z + ENTRANCE_CLEARANCE_Z for e in t.entrances if e.ride != ride_id]
             if parts:
                 tops[(t.x, t.y)] = max(parts)

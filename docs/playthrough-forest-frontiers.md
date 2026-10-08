@@ -475,3 +475,29 @@ out of cash 7.5%, wants a toilet / drink / umbrella / map about 4% each.
 - **After a few days:** crowded 59% -> 45%, running out of cash 7.5% -> 2%, vandalism
   8.6% -> 7.4%, unhappy guests 18 -> 9, average happiness 196 -> 202, **park rating
   976 -> 999**. The rain also stopped in that window, which helps happiness on its own.
+
+## Phase 10: Grizzly Gauntlet
+
+- **Research greyed out:** thrill, water and scenery are fully invented in this
+  scenario; only 6 items remain (3 food stalls, small monorail, stand-up coaster
+  trains, Space Rings), so only shop/transport/coaster/gentle can be selected.
+  `load_object_tool` adds installed objects regardless of research.
+- **Site:** no 8x6 open block left; land costs about $30/tile (the east lake block
+  $7,860). A sweep of all 395 station spots beside paths found 2 that close a full
+  circuit, both at the foot of Lookout Hill. Every candidate was priced piece by
+  piece with the game's own `trackplace` query before building ($7.5k-16.4k).
+- **First build was unrideable:** lift 15, 6 inversions, and a 31-unit drop straight
+  into tight banked 3-tile turns: intensity 14.81, excitement 1.51. Demolished
+  for a $9,923 refund (never opened). The demolish tool crashed on the ride's
+  fractional airtime (pyrct2 model); it now uses the raw action and reports the refund.
+- **Second build:** tight 3-tile turns removed from the generator pool, lift 10, 112
+  pieces, 4 inversions, 4 drops, $11,285. The first test stalled: a new train
+  report (tile, height, speed per train) showed it rolling backwards before the
+  final climbs, which the generator's energy model under-rated. Chain lifts added
+  to 13 climb/flat pieces by re-placing them with the lift flag.
+- **Ratings: excitement 6.59 (park best), intensity 7.22, nausea 3.57.** Station is
+  8 above the south path, so access is a bought 9-tile strip: a raised landing,
+  a 4-tile ramp down and a 3-tile raised queue. $7 a ride.
+- Gaps: generator obstacle tops ignored sloped paths (+2); pricing queries collide
+  with a ride's own track (price before building or after demolishing); the
+  lift-speed ride setting is rejected (value out of range) in this build.
