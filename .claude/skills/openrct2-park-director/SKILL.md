@@ -245,6 +245,14 @@ Use low-level survey tools only when auto-build fails or user asks for step-by-s
 - Windows: works when the window is covered and never takes focus; a minimized (e.g. fullscreen, unfocused) game needs `bring_to_front=true`, which un-minimizes it just for the capture
 - macOS: grant **Screen Recording** to the terminal running Claude Code
 - Use `inspect_area_at_tile` for ASCII path grids + optional screenshot
+- `focus_camera_tool(tile_x, tile_y, zoom, rotation)` centres the view and captures; `crop=0.4` keeps native resolution on 4K screens
+
+## Landscaping and mazes
+
+- Flower beds: small scenery `rct2.scenery_small.tg1`-`tg14` (full tile) and `tg15`-`tg21` (quarter clumps). All are named "Gardens", so pick by identifier; `list_scenery_objects_tool(search="garden")`
+- `landscape_tool` modes: `borders` (stripes along paths), `terraces` (one colour per height), `lawns` (tree grid + centrepiece). Always run `dry_run=true` first and pass `budget`; it skips queues and ride entrances
+- `build_maze_tool`: entrance/exit tiles must sit just outside the maze rectangle, beside a maze tile
+- Terraforming (`terraform_region_tool`, raw `landsetheight`) is expensive and not previewed: a small stepped hill cost $8,530. Check cash first
 
 ## Connection troubleshooting
 

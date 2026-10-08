@@ -193,7 +193,9 @@ def _find_game_window(api: SimpleNamespace) -> tuple[int, str] | None:
     return hwnd, exe
 
 
-def capture_window_png(path: Path, *, max_width: int, bring_to_front: bool) -> tuple[Path, dict]:
+def capture_window_png(
+    path: Path, *, max_width: int, bring_to_front: bool, crop: float = 1.0
+) -> tuple[Path, dict]:
     """Capture the game window without taking focus from the user's terminal.
 
     bring_to_front only matters when the game is minimized (fullscreen OpenRCT2
@@ -211,7 +213,7 @@ def capture_window_png(path: Path, *, max_width: int, bring_to_front: bool) -> t
             raise VisionCaptureError("OpenRCT2 window not found. Is the game running (not headless)?")
         hwnd, exe = found
         if not api.IsIconic(hwnd):
-            return _capture(api, hwnd, exe, path, max_width=max_width)
+            return _capture(api, hwnd, exe, path, max_width=max_width, crop=crop)
         if not bring_to_front:
             raise VisionCaptureError(
                 "OpenRCT2 is minimized; retry with bring_to_front=true. (Fullscreen OpenRCT2 minimizes "
@@ -220,7 +222,7 @@ def capture_window_png(path: Path, *, max_width: int, bring_to_front: bool) -> t
         api.ShowWindow(hwnd, _SW_SHOWNOACTIVATE)
         try:
             time.sleep(0.5)  # let the game repaint at full size
-            image_path, meta = _capture(api, hwnd, exe, path, max_width=max_width)
+            image_path, meta = _capture(api, hwnd, exe, path, max_width=max_width, crop=crop)
         finally:
             api.ShowWindow(hwnd, _SW_SHOWMINNOACTIVE)
         meta["restored_from_minimized"] = True
@@ -230,14 +232,25 @@ def capture_window_png(path: Path, *, max_width: int, bring_to_front: bool) -> t
             api.SetThreadDpiAwarenessContext(previous_dpi)
 
 
-def _capture(api: SimpleNamespace, hwnd: int, exe: str, path: Path, *, max_width: int) -> tuple[Path, dict]:
+def crop_rect(width: int, height: int, crop: float) -> tuple[int, int, int, int]:
+    """Centred (x, y, w, h) covering ``crop`` of each window dimension (0 < crop <= 1)."""
+    crop = min(1.0, max(0.05, crop))
+    cw, ch = max(1, round(width * crop)), max(1, round(height * crop))
+    return (width - cw) // 2, (height - ch) // 2, cw, ch
+
+
+def _capture(
+    api: SimpleNamespace, hwnd: int, exe: str, path: Path, *, max_width: int, crop: float = 1.0
+) -> tuple[Path, dict]:
     width, height = _client_size(api, hwnd)
     if width <= 0 or height <= 0:
         raise VisionCaptureError("OpenRCT2 window has no drawable area.")
-    if max_width > 0 and width > max_width:
-        out_w, out_h = max_width, max(1, round(height * max_width / width))
+    # A centre crop keeps full-resolution detail on large (e.g. 4K) windows.
+    cx, cy, cw, ch = crop_rect(width, height, crop)
+    if max_width > 0 and cw > max_width:
+        out_w, out_h = max_width, max(1, round(ch * max_width / cw))
     else:
-        out_w, out_h = width, height
+        out_w, out_h = cw, ch
 
     window_dc = api.GetDC(hwnd)
     if not window_dc:
@@ -254,7 +267,7 @@ def _capture(api: SimpleNamespace, hwnd: int, exe: str, path: Path, *, max_width
             method = "bitblt"  # only correct if the window is unobscured
             api.BitBlt(src_dc, 0, 0, width, height, window_dc, 0, 0, _SRCCOPY)
 
-        if (out_w, out_h) == (width, height):
+        if (out_w, out_h) == (width, height) and (cx, cy) == (0, 0):
             api.SelectObject(src_dc, src_old)
             read_dc, read_bmp = src_dc, src_bmp
         else:
@@ -265,7 +278,7 @@ def _capture(api: SimpleNamespace, hwnd: int, exe: str, path: Path, *, max_width
             dst_old = api.SelectObject(dst_dc, dst_bmp)
             api.SetStretchBltMode(dst_dc, _HALFTONE)
             api.SetBrushOrgEx(dst_dc, 0, 0, None)
-            api.StretchBlt(dst_dc, 0, 0, out_w, out_h, src_dc, 0, 0, width, height, _SRCCOPY)
+            api.StretchBlt(dst_dc, 0, 0, out_w, out_h, src_dc, cx, cy, cw, ch, _SRCCOPY)
             api.SelectObject(dst_dc, dst_old)
             api.SelectObject(src_dc, src_old)
             read_dc, read_bmp = dst_dc, dst_bmp
@@ -297,6 +310,7 @@ def _capture(api: SimpleNamespace, hwnd: int, exe: str, path: Path, *, max_width
         "method": method,
         "window": {"hwnd": hwnd, "exe": exe, "width": width, "height": height},
         "image": {"width": out_w, "height": out_h},
+        "crop": round(crop, 3),
         "path": str(path),
         "bytes": path.stat().st_size,
     }

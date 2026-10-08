@@ -160,6 +160,7 @@ def capture_game_window(
     *,
     max_width: int = _DEFAULT_MAX_WIDTH,
     bring_to_front: bool = True,
+    crop: float = 1.0,
 ) -> tuple[Path, dict]:
     """Capture the OpenRCT2 game window to a temporary PNG file.
 
@@ -170,7 +171,7 @@ def capture_game_window(
             from openrct2_mcp.vision_windows import capture_window_png
 
             return capture_window_png(
-                _new_capture_path(), max_width=max_width, bring_to_front=bring_to_front
+                _new_capture_path(), max_width=max_width, bring_to_front=bring_to_front, crop=crop
             )
         if sys.platform == "darwin":
             return _capture_macos(max_width=max_width, bring_to_front=bring_to_front)
@@ -185,7 +186,12 @@ def capture_game_image(
     *,
     max_width: int = _DEFAULT_MAX_WIDTH,
     bring_to_front: bool = True,
+    crop: float = 1.0,
 ) -> tuple[Image, dict]:
-    """Capture and return an MCP Image plus metadata."""
-    path, meta = capture_game_window(max_width=max_width, bring_to_front=bring_to_front)
+    """Capture and return an MCP Image plus metadata.
+
+    crop < 1 keeps only the centre of the window (Windows; ignored on macOS) so
+    detail survives the downscale on large displays.
+    """
+    path, meta = capture_game_window(max_width=max_width, bring_to_front=bring_to_front, crop=crop)
     return Image(path=path), meta

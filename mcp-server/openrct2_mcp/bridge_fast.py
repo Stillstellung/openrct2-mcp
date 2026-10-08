@@ -75,6 +75,20 @@ def ride_maintenance_from_raw(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _defined_money(value: Any) -> Any:
+    """None for the game's MONEY64_UNDEFINED (INT64_MIN) used before a ride has any data."""
+    if isinstance(value, (int, float)) and value <= -(2**62):
+        return None
+    return value
+
+
+def _defined_satisfaction(value: Any) -> Any:
+    """Satisfaction is a percentage; unrated rides report 255 * 5 = 1275."""
+    if isinstance(value, (int, float)) and not 0 <= value <= 100:
+        return None
+    return value
+
+
 def ride_summary_from_raw(raw: dict[str, Any]) -> dict[str, Any]:
     """Normalize a single ride dict from the bridge (no Pydantic)."""
     excitement = raw.get("excitement")
@@ -93,7 +107,7 @@ def ride_summary_from_raw(raw: dict[str, Any]) -> dict[str, Any]:
         "total_profit": raw.get("totalProfit"),
         "total_customers": raw.get("totalCustomers"),
         "price": primary_ride_price(raw.get("price")),
-        "satisfaction": raw.get("satisfaction"),
+        "satisfaction": _defined_satisfaction(raw.get("satisfaction")),
         "breakdown": maintenance["breakdown"],
         "active_breakdown": maintenance["active_breakdown"],
         "downtime": maintenance["downtime"],
@@ -101,8 +115,8 @@ def ride_summary_from_raw(raw: dict[str, Any]) -> dict[str, Any]:
         "age_months": maintenance["age_months"],
         "guest_count": guest_count,
         "is_empty": raw.get("isEmpty") if "isEmpty" in raw else (guest_count == 0 if guest_count is not None else None),
-        "income_per_hour": raw.get("incomePerHour"),
-        "profit": raw.get("profit"),
+        "income_per_hour": _defined_money(raw.get("incomePerHour")),
+        "profit": _defined_money(raw.get("profit")),
         "inspection_interval": raw.get("inspectionInterval"),
         "minimum_waiting_time": raw.get("minimumWaitingTime"),
         "maximum_waiting_time": raw.get("maximumWaitingTime"),

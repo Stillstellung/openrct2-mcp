@@ -351,3 +351,45 @@ All of these were fixed after phase 2 (see the commit that follows this log):
   Names: Timber Rattler, Lil' Ladybug, Fern Flinger, Thunder Ridge, Mole Hole Express,
   Canopy Glider, Valley Dipper, Sky Sweeper, Serpent of the Pines.
 - Park at Y4 March: 1,388 guests.
+
+## Phase 7: gardens, a hedge maze and Lookout Hill
+
+- **Duplicates swapped out:** Haunted House 2 and both Space Rings were demolished. In their
+  place: **Bumper Bash** (bumper cars, 4x4; the first anchor guess was off by a tile, so the
+  footprint had to be re-anchored at (44,53)), **Hedgehog Hollow Maze** and **Summit Spinner**
+  (Space Rings rebuilt on top of Lookout Hill). Twist 1 / Twist 2 are the next duplicate pair.
+- **Hedge maze:** `mazesettrack` in BUILD mode carves hedges on a half-tile grid, so a maze is
+  a depth-first spanning tree over 2x2 cells per tile plus one opening toward each of the
+  entrance and exit. The first 47-passage maze had no carving errors. Now `build_maze_tool`.
+- **Lookout Hill (building up):** a stepped ziggurat raised with `landsetheight`, a cut ramp
+  and tunnel path up to a summit plaza, and a flat ride on top. Path links checked from the
+  ramp foot to the ride entrance and exit. The terraforming cost **$8,530**, far more than
+  expected, and no tool shows that cost beforehand.
+- **Flowers:** the flower beds are small scenery `tg1`-`tg14` (full tile, $12-13) and
+  `tg15`-`tg21` (quarter-tile clumps, $4). All 21 are called "Gardens", so only the identifier
+  tells them apart. Ornamental tree `torn1`, fountain `ttf`. Beds fail on tiles with trees
+  (NO_CLEARANCE).
+- **Park-wide landscaping in one plan:** scan once, then three layers: one flower colour per
+  terrace level on the hill (65), alternating stripes along every ground-level path (204),
+  and ornamental tree grids with a fountain per open lawn (19). **288 objects, 0 failures,
+  $3,750.** Never next to queues or ride entrances, so no queue gets boxed in. Now
+  `landscape_tool` (dry run by default, budget cap).
+- **Camera:** new `moveCamera` plugin endpoint + `focus_camera_tool` (centre, zoom, rotation,
+  then capture). It needs about 0.8 s for the game to redraw, or the shot shows the old view.
+  4K windows were downscaled until the new `crop` option kept the native-resolution centre.
+- Park at Y4 January: **rating 976**, 1,388 guests, $4.7k cash.
+
+### Gaps found this round
+
+| Gap | Status |
+|---|---|
+| No camera control, so screenshots couldn't target an area | fixed: `focus_camera_tool` |
+| 4K screenshots downscaled too far to read | fixed: `crop` |
+| Scenery list capped, no size/height/price, no search | fixed: `search`, `offset`, `fullTile`/`height`/`price` |
+| No maze tool | fixed: `build_maze_tool` |
+| No bulk, rule-based landscaping | fixed: `landscape_tool` |
+| Unrated rides reported profit -9.2e18 and satisfaction 1275 | fixed: null until data exists |
+| Terraform cost unknown until paid ($8,530 surprise) | open: needs a cost preview / dry run |
+| Ambiguous object names (21 "Gardens") | open: show identifiers alongside names everywhere |
+| Research list shows Space Rings as uninvented yet it was buildable | open |
+| Scanning large areas is slow (~25 ms/tile) | open: a bulk tile query in the plugin |

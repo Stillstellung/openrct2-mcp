@@ -194,25 +194,41 @@ def list_scenery_objects(
     kind: str = "small_scenery",
     limit: int = 50,
     ride_builder=None,
+    search: str | None = None,
+    offset: int = 0,
 ) -> list[dict]:
-    """List loaded scenery objects via bridge or ride-builder."""
+    """List loaded scenery objects via bridge or ride-builder.
+
+    search filters by name or identifier (case-insensitive); offset pages
+    through long lists. Small scenery rows from the ride-builder plugin also
+    carry fullTile, height and price.
+    """
+    def page(rows: list) -> list:
+        if search:
+            needle = search.lower()
+            rows = [
+                r for r in rows
+                if needle in str(r.get("name", "")).lower() or needle in str(r.get("identifier", "")).lower()
+            ]
+        return rows[offset:offset + limit]
+
     if ride_builder is not None:
         try:
             raw = ride_builder.call("listLoadedScenery", {"kind": kind})
             if isinstance(raw, list):
-                return raw[:limit]
+                return page(raw)
         except Exception:
             pass
     try:
         raw = game._query("list_objects", {"type": kind})
         if isinstance(raw, list):
-            return raw[:limit]
+            return page(raw)
     except Exception:
         pass
     try:
         raw = game._query("get_loaded_objects", {"type": kind})
         if isinstance(raw, list):
-            return raw[:limit]
+            return page(raw)
     except Exception:
         pass
     # Fallback: sample identifiers from existing map elements.

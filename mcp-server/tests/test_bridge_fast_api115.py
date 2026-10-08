@@ -40,3 +40,12 @@ class MergeRideBuilderMaintenanceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_unrated_ride_sentinels_become_none():
+    from openrct2_mcp.bridge_fast import ride_summary_from_raw
+
+    row = ride_summary_from_raw({"id": 1, "satisfaction": 1275, "profit": -(2**63), "incomePerHour": -(2**63)})
+    assert row["satisfaction"] is None and row["profit"] is None and row["income_per_hour"] is None
+    row = ride_summary_from_raw({"id": 2, "satisfaction": 70, "profit": -496, "incomePerHour": 0})
+    assert (row["satisfaction"], row["profit"], row["income_per_hour"]) == (70, -496, 0)

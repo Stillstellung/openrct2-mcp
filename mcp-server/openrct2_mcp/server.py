@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -162,6 +163,37 @@ mcp = FastMCP("openrct2")
 
 def _json(data: Any) -> str:
     return json.dumps(data, indent=2, default=str)
+
+
+@mcp.tool()
+def focus_camera_tool(
+    tile_x: int,
+    tile_y: int,
+    zoom: int | None = None,
+    rotation: int | None = None,
+    capture: bool = True,
+    crop: float = 0.4,
+) -> Any:
+    """Centre the game view on a tile and (by default) return a screenshot of it.
+
+    zoom 0 (closest) to 5 (farthest); rotation 0-3 turns the camera by 90 degrees.
+    crop keeps the centre fraction of the window at full resolution (1.0 = whole
+    window), so close-ups stay sharp on 4K displays. Needs the game UI.
+    """
+    params: dict[str, Any] = {"x": tile_x, "y": tile_y}
+    if zoom is not None:
+        params["zoom"] = zoom
+    if rotation is not None:
+        params["rotation"] = rotation
+    moved = SESSION.ride_builder.call("moveCamera", params)
+    if not capture:
+        return _json(moved)
+    time.sleep(0.8)  # let the game redraw before capturing
+    try:
+        image, meta = capture_game_image(bring_to_front=True, crop=crop)
+    except VisionCaptureError as exc:
+        return _json({"camera": moved, "screenshot_error": str(exc)})
+    return _json({"camera": moved, "screenshot": meta}), image
 
 
 @mcp.tool()
@@ -1667,10 +1699,124 @@ def coaster_build_perimeter(
 
 
 @mcp.tool()
-def list_scenery_objects_tool(kind: str = "small_scenery", limit: int = 50) -> str:
-    """List loaded scenery objects (small_scenery, large_scenery, wall, banner)."""
+def list_scenery_objects_tool(
+    kind: str = "small_scenery", limit: int = 50, search: str | None = None, offset: int = 0
+) -> str:
+    """List loaded scenery objects (small_scenery, large_scenery, wall, banner, station).
+
+    search filters by name/identifier (e.g. "garden" finds the flower beds tg1-tg21);
+    offset pages through long lists. Small scenery includes fullTile/height/price.
+    """
     with game_context() as game:
-        return _json(list_scenery_objects(game, kind, limit, SESSION.ride_builder))
+        return _json(list_scenery_objects(game, kind, limit, SESSION.ride_builder, search=search, offset=offset))
+
+
+@mcp.tool()
+def build_maze_tool(
+    tile_x: int,
+    tile_y: int,
+    width: int,
+    height: int,
+    entrance_x: int,
+    entrance_y: int,
+    exit_x: int,
+    exit_y: int,
+    seed: int | None = None,
+    ride_object: str = "rct2.ride.hmaze",
+    entrance_style: str = "Log Cabin",
+) -> str:
+    """Build a random hedge maze covering width x height tiles from (tile_x, tile_y).
+
+    The maze is a depth-first spanning tree over half-tile cells carved with the
+    game's maze build mode, so every cell is reachable. Entrance/exit tiles must
+    be just outside the maze rectangle, beside a maze tile; the hedge facing each
+    is opened. Connect paths to their outer side, then open_ride.
+    """
+    from pyrct2.enums import Direction
+
+    from openrct2_mcp.maze_builder import build_maze, entrance_openings
+    from openrct2_mcp.ride_ops import station_style_index
+
+    with game_context() as game:
+        ensure_paused(game)
+        index = next(
+            int(o["index"]) for o in game._query("get_objects", {"type": "ride"})
+            if o["identifier"] == ride_object
+        )
+        style = station_style_index(game, entrance_style)
+        result = build_maze(game, index, tile_x, tile_y, width, height, seed=seed, entrance_object=style)
+        ride = result["ride_id"]
+        z = _surface_base_z(game, tile_x, tile_y)
+        placed, opened = [], 0
+        for (ex, ey), is_exit in (((entrance_x, entrance_y), False), ((exit_x, exit_y), True)):
+            toward, cells = entrance_openings(tile_x, tile_y, width, height, ex, ey)
+            game.actions.ride_entrance_exit_place(
+                x=ex * 32, y=ey * 32, direction=Direction((toward + 2) % 4), ride=ride, station=0, is_exit=is_exit
+            )
+            placed.append({"tile": [ex, ey], "exit": is_exit})
+            for cx, cy in cells:
+                game.execute("mazesettrack", {
+                    "x": tile_x * 32 + cx * 16, "y": tile_y * 32 + cy * 16, "z": z,
+                    "direction": toward, "ride": ride, "mode": 0, "isInitialPlacement": False,
+                })
+                opened += 1
+        result["entrances"] = placed
+        result["opened_hedges"] = opened
+        log_action("build_maze", {"ride": ride, "size": [width, height]})
+        return _json(result)
+
+
+def _surface_base_z(game: RCT2, x: int, y: int) -> int:
+    raw = game._query("get_tile", {"x": x, "y": y})
+    return int(next(e for e in raw["elements"] if e.get("type") == "surface")["baseZ"])
+
+
+@mcp.tool()
+def landscape_tool(
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    mode: str = "borders",
+    palette: str = "rct2.scenery_small.tg1,rct2.scenery_small.tg4",
+    tree: str = "rct2.scenery_small.torn1",
+    centrepiece: str | None = "rct2.scenery_small.ttf",
+    spacing: int = 3,
+    budget: int | None = None,
+    dry_run: bool = True,
+) -> str:
+    """Plan (and optionally place) orderly landscaping in a rectangle.
+
+    mode: "borders" (flower beds on empty grass touching ground-level paths, palette
+    alternating in stripes), "terraces" (palette entries map to rising surface
+    heights, one per terrace level), or "lawns" (tree grid every `spacing` tiles
+    inside open lawns with a centrepiece per lawn). Only empty, owned, flat grass is
+    planted, never beside ride entrances, exits or queues. budget is in money units
+    ($1 = 10). Scanning costs about 25 ms per tile; keep rectangles focused.
+    """
+    from openrct2_mcp.landscaping import apply_plan, lawn_plan, path_border_plan, scan_area, terrace_plan
+
+    objects = [p.strip() for p in palette.split(",") if p.strip()]
+    with game_context() as game:
+        ensure_paused(game)
+        tiles = scan_area(game, x1, y1, x2, y2)
+        if mode == "borders":
+            plan = path_border_plan(tiles, objects)
+        elif mode == "terraces":
+            heights = sorted({t.z for t in tiles.values() if t.owned})
+            bands = {z: objects[min(i, len(objects) - 1)] for i, z in enumerate(heights)}
+            plan = terrace_plan(tiles, bands, tiles.keys())
+        elif mode == "lawns":
+            plan = lawn_plan(tiles, tree, centrepiece, spacing=spacing)
+        else:
+            raise ValueError("mode must be borders, terraces or lawns")
+        summary = {"mode": mode, "scanned": len(tiles), "planned": len(plan)}
+        if dry_run:
+            summary["sample"] = [[x, y, o] for (x, y), o in sorted(plan.items())[:20]]
+            return _json(summary)
+        summary.update(apply_plan(game, plan, budget=budget))
+        log_action("landscape", {"mode": mode, "placed": summary.get("placed")})
+        return _json(summary)
 
 
 @mcp.tool()

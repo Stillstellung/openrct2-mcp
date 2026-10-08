@@ -127,6 +127,7 @@ function main() {
         ["getRideStats",         params => handleGetRideStats(params)],
         ["getRideMaintenance",   params => handleGetRideMaintenance(params)],
         ["getRideTrains",        params => handleGetRideTrains(params)],
+        ["moveCamera",           params => handleMoveCamera(params)],
         ["listRideMaintenance",  () => handleListRideMaintenance()],
         ["getGameSpeed",         () => handleGetGameSpeed()],
         ["getElementsInRect",    params => handleGetElementsInRect(params)],
@@ -186,11 +187,17 @@ function main() {
     async function handleListLoadedScenery(params) {
         const kind = (params && params.kind) || "small_scenery";
         const all = objectManager.getAllObjects(kind);
-        return all.map(o => ({
-            index: o.index,
-            identifier: o.identifier,
-            name: o.name,
-        }));
+        return all.map(o => {
+            const row = { index: o.index, identifier: o.identifier, name: o.name };
+            if (kind === "small_scenery" && typeof o.flags === "number") {
+                // SMALL_SCENERY_FLAG_FULL_TILE (bit 0): fills the tile; otherwise it sits in a quarter.
+                row.fullTile = (o.flags & 1) !== 0;
+                row.height = o.height;
+                row.price = o.price;
+            }
+            if (o.sceneryGroup !== undefined) row.sceneryGroup = o.sceneryGroup;
+            return row;
+        });
     }
 
     async function handleGetAllTrackSegments() {
@@ -440,6 +447,20 @@ function main() {
             intensity: ride.intensity / 100,
             nausea: ride.nausea / 100,
         };
+    }
+
+    // Centre the main view on a tile (optionally set zoom 0-5 and rotation 0-3) so
+    // screenshots show what an agent just built. Only works with a UI (not headless).
+    async function handleMoveCamera(params) {
+        if (typeof ui === "undefined" || !ui.mainViewport) throw new Error("No UI viewport (headless game)");
+        const { x, y, zoom, rotation } = params || {};
+        if (typeof x !== "number" || typeof y !== "number") throw new Error("Missing or invalid parameters: x, y (tiles)");
+        const vp = ui.mainViewport;
+        if (typeof rotation === "number") vp.rotation = rotation & 3;
+        if (typeof zoom === "number") vp.zoom = Math.max(0, Math.min(5, zoom));
+        const surface = map.getTile(x, y).elements.find(e => e.type === "surface");
+        vp.moveTo({ x: x * 32 + 16, y: y * 32 + 16, z: surface ? surface.baseZ : 0 });
+        return { x, y, zoom: vp.zoom, rotation: vp.rotation };
     }
 
     // Trains only exist while a ride is open or testing; a closed ride reports 0.
