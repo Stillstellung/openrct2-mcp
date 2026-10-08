@@ -9,6 +9,7 @@ from pyrct2.client import RCT2
 from pyrct2.world._tile import Tile
 
 from openrct2_mcp.map_region import get_map_bounds
+from openrct2_mcp.connection import raw_tile, tiles_in
 
 # OpenRCT2 GameActions::Status codes returned by queryAction.
 ACTION_STATUS = {
@@ -40,7 +41,7 @@ def terraform_region(
     y_lo, y_hi = min(y1, y2), max(y1, y2)
     tiles = [(tx, ty) for tx in range(x_lo, x_hi + 1) for ty in range(y_lo, y_hi + 1)]
     if flatten and target_height is None:
-        raw = game._query("get_tile", {"x": x_lo, "y": y_lo})
+        raw = raw_tile(game, x_lo, y_lo)
         surface = next((e for e in raw.get("elements", []) if e.get("type") == "surface"), None)
         target_height = int(surface["baseZ"]) // 8 if surface else 14
 
@@ -162,7 +163,7 @@ def _open_tile_heights(
         for y0 in range(bounds["min_y"], bounds["max_y"] + 1, _TILE_FETCH_CHUNK):
             x1 = min(x0 + _TILE_FETCH_CHUNK - 1, bounds["max_x"])
             y1 = min(y0 + _TILE_FETCH_CHUNK - 1, bounds["max_y"])
-            for t in game.world.get_tiles(Tile(x0, y0), Tile(x1, y1)):
+            for t in tiles_in(game, x0, y0, x1, y1):
                 surface = t.surface
                 if not surface.hasOwnership or surface.slope != 0:
                     continue

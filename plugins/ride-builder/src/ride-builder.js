@@ -537,7 +537,8 @@ function main() {
                             el.isQueue ? 1 : 0, el.addition == null ? -1 : el.addition, el.isAdditionBroken ? 1 : 0]);
                     } else if (el.type === "track") {
                         f |= FLAG.TRACK;
-                        track.push([i, z, el.ride, el.trackType, el.sequence == null ? 0 : el.sequence, tz(el.clearanceZ), el.direction]);
+                        track.push([i, z, el.ride, el.trackType, el.sequence == null ? 0 : el.sequence, tz(el.clearanceZ), el.direction,
+                            el.rideType == null ? -1 : el.rideType]);
                     } else if (el.type === "entrance") {
                         f |= FLAG.ENTRANCE;
                         entrances.push([i, z, el.ride == null ? -1 : el.ride, el.station == null ? -1 : el.station, el.object, el.direction]);

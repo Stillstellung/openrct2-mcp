@@ -59,6 +59,7 @@ class TrackPiece:
     sequence: int
     top: int
     direction: int
+    ride_type: int | None = None
 
 
 @dataclass(frozen=True)
@@ -161,8 +162,9 @@ class Chunk:
         for i, z, edges, slope_dir, queue, addition, broken in p["paths"]:
             c.paths.setdefault(i, []).append(PathPiece(
                 z, edges, None if slope_dir < 0 else slope_dir, bool(queue), None if addition < 0 else addition, bool(broken)))
-        for i, z, ride, track_type, seq, top, direction in p["track"]:
-            c.track.setdefault(i, []).append(TrackPiece(z, ride, track_type, seq, top, direction))
+        for i, z, ride, track_type, seq, top, direction, *rest in p["track"]:
+            ride_type = rest[0] if rest and rest[0] >= 0 else None
+            c.track.setdefault(i, []).append(TrackPiece(z, ride, track_type, seq, top, direction, ride_type))
         for i, z, ride, station, kind, direction in p["entrances"]:
             c.entrances.setdefault(i, []).append(EntrancePiece(
                 z, None if ride < 0 else ride, None if station < 0 else station, ENTRANCE_KIND.get(kind, str(kind)), direction))
@@ -355,3 +357,97 @@ def ride_builder_model(ride_builder_getter: Callable[[], Any]) -> MapModel:
         return ride_builder_getter().call("getMapChanges", {"sinceRevision": since, "sessionId": session_id})
 
     return MapModel(fetch, changes)
+
+
+# -- adapters for readers written against pyrct2 tiles or raw get_tile dicts -------
+
+ENTRANCE_OBJECT = {"entrance": 0, "exit": 1, "park_gate": 2}
+_SCENERY_TYPE = {"small": "small_scenery", "large": "large_scenery", "wall": "wall", "banner": "banner"}
+
+
+def raw_elements(view: TileView) -> list[dict[str, Any]]:
+    """The tile as raw element dicts (the fields map readers use from ``get_tile``)."""
+    from openrct2_mcp.units import OWNERSHIP_OWNED
+
+    els: list[dict[str, Any]] = [{
+        "type": "surface", "baseZ": view.ground * 8, "baseHeight": view.ground, "clearanceZ": view.ground * 8,
+        "slope": view.slope, "waterHeight": view.water * 8, "surfaceStyle": view.style,
+        "hasOwnership": view.owned, "hasConstructionRights": view.construction_rights,
+        "ownership": OWNERSHIP_OWNED if view.owned else 0, "isGhost": False,
+    }]
+    for p in view.paths:
+        els.append({"type": "footpath", "baseZ": p.z * 8, "baseHeight": p.z, "clearanceZ": (p.z + 4) * 8,
+                    "edges": p.edges, "slopeDirection": p.slope_direction, "isQueue": p.queue,
+                    "addition": p.addition, "isAdditionBroken": p.addition_broken, "isGhost": False})
+    for t in view.track:
+        els.append({"type": "track", "baseZ": t.z * 8, "baseHeight": t.z, "clearanceZ": t.top * 8, "ride": t.ride,
+                    "trackType": t.track_type, "sequence": t.sequence, "direction": t.direction,
+                    "rideType": t.ride_type, "isGhost": False})
+    for e in view.entrances:
+        els.append({"type": "entrance", "baseZ": e.z * 8, "baseHeight": e.z, "clearanceZ": (e.z + 6) * 8,
+                    "ride": e.ride, "station": e.station, "object": ENTRANCE_OBJECT.get(e.kind, 0),
+                    "direction": e.direction, "isGhost": False})
+    for s in view.scenery:
+        el = {"type": _SCENERY_TYPE.get(s.kind, s.kind), "baseZ": s.z * 8, "baseHeight": s.z, "clearanceZ": s.top * 8,
+              "object": s.object, "isGhost": False}
+        el["quadrant" if s.kind == "small" else "direction"] = s.detail
+        els.append(el)
+    return els
+
+
+class _Element:
+    """Attribute access over a raw element dict (like a pyrct2 element model)."""
+
+    __slots__ = ("_d",)
+
+    def __init__(self, d: dict[str, Any]):
+        self._d = d
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self._d[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+    def get(self, name: str, default: Any = None) -> Any:
+        return self._d.get(name, default)
+
+
+class TileDataView:
+    """Duck-typed stand-in for pyrct2 ``TileData`` built from the cached map."""
+
+    def __init__(self, view: TileView):
+        self.x, self.y = view.x, view.y
+        self.view = view
+        self.elements = [_Element(e) for e in raw_elements(view)]
+
+    def _of(self, *types: str) -> list[_Element]:
+        return [e for e in self.elements if e.type in types]
+
+    @property
+    def surface(self) -> _Element:
+        return self.elements[0]
+
+    @property
+    def paths(self) -> list[_Element]:
+        return self._of("footpath")
+
+    @property
+    def tracks(self) -> list[_Element]:
+        return self._of("track")
+
+    @property
+    def scenery(self) -> list[_Element]:
+        return self._of("small_scenery", "large_scenery")
+
+    @property
+    def walls(self) -> list[_Element]:
+        return self._of("wall")
+
+    @property
+    def entrances(self) -> list[_Element]:
+        return self._of("entrance")
+
+    @property
+    def banners(self) -> list[_Element]:
+        return self._of("banner")

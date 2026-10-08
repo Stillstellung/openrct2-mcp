@@ -11,6 +11,7 @@ from pyrct2._generated.objects import FootpathSurfaceInfo
 from pyrct2.client import RCT2
 from pyrct2.objects import FootpathAdditions
 from pyrct2.world._tile import Tile
+from openrct2_mcp.connection import tiles_in
 
 THEMES_DIR = Path(__file__).resolve().parents[2] / "themes"
 
@@ -128,7 +129,7 @@ def _fetch_tiles(
         y1 = min(bounds.y - 1, cy * chunk_size + chunk_size - 1)
         if x0 > x1 or y0 > y1:
             continue
-        for tile in game.world.get_tiles(Tile(x0, y0), Tile(x1, y1)):
+        for tile in tiles_in(game, x0, y0, x1, y1):
             out[(tile.x, tile.y)] = tile
     return out
 
@@ -519,7 +520,7 @@ def _scan_footpaths_via_tiles(
         for x0 in range(x_start, x_end + 1, chunk_size):
             x1 = min(x0 + chunk_size - 1, x_end)
             y1 = min(y0 + chunk_size - 1, y_end)
-            for tile in game.world.get_tiles(Tile(x0, y0), Tile(x1, y1)):
+            for tile in tiles_in(game, x0, y0, x1, y1):
                 rows.extend(_rows_from_tile_elements(tile.x, tile.y, tile.elements, objs))
     return rows
 

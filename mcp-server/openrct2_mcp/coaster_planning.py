@@ -16,6 +16,7 @@ from pyrct2.world._tile import Tile
 
 from openrct2_mcp.connection import RideBuilderClient
 from openrct2_mcp.units import surface_owned
+from openrct2_mcp.connection import model_for, tile_data, tiles_in
 
 # OpenRCT2 map directions: 0 = -x, 1 = +y, 2 = +x, 3 = -y (see units.DIR_DELTA).
 DIR_DELTA: dict[int, tuple[int, int]] = {
@@ -55,6 +56,9 @@ def _cache_fresh() -> bool:
 
 
 def _park_path_tiles(game: RCT2) -> set[tuple[int, int]]:
+    model = model_for(game)
+    if model is not None:  # always current, no TTL needed
+        return {(x, y) for x, y, _p in model.all_paths()}
     if _cache_fresh() and _PARK_TILE_CACHE["paths"] is not None:
         return _PARK_TILE_CACHE["paths"]
     paths: set[tuple[int, int]] = set()
@@ -66,6 +70,9 @@ def _park_path_tiles(game: RCT2) -> set[tuple[int, int]]:
 
 
 def _park_track_tiles(game: RCT2, exclude_ride_id: int | None) -> set[tuple[int, int]]:
+    model = model_for(game)
+    if model is not None:
+        return {(x, y) for x, y, t in model.all_track() if exclude_ride_id is None or t.ride != exclude_ride_id}
     tracks_cache: dict = _PARK_TILE_CACHE["tracks"]
     key = exclude_ride_id if exclude_ride_id is not None else -1
     if _cache_fresh() and key in tracks_cache:
@@ -210,7 +217,7 @@ def build_track_environment(
 
     x1, y1 = env.min_x, env.min_y
     x2, y2 = env.max_x, env.max_y
-    tiles = game.world.get_tiles(Tile(x1, y1), Tile(x2, y2))
+    tiles = tiles_in(game, x1, y1, x2, y2)
     for tile in tiles:
         xy = (tile.x, tile.y)
         surf = tile.surface
@@ -319,7 +326,7 @@ def fetch_region_tile_map(
             tx1 = min(tx0 + TILE_CHUNK - 1, x2)
             ty1 = min(ty0 + TILE_CHUNK - 1, y2)
             try:
-                tiles = game.world.get_tiles(Tile(tx0, ty0), Tile(tx1, ty1))
+                tiles = tiles_in(game, tx0, ty0, tx1, ty1)
             except Exception:
                 continue
             for tile in tiles:
@@ -359,7 +366,7 @@ def get_tile_surface_info(
         return {"x": tile_x, "y": tile_y, "in_bounds": False, "buildable_flat": False, "error": "out_of_bounds"}
 
     try:
-        tile = game.world.get_tile(Tile(tile_x, tile_y))
+        tile = tile_data(game, tile_x, tile_y)
     except Exception as exc:
         return {"x": tile_x, "y": tile_y, "in_bounds": True, "buildable_flat": False, "error": str(exc)}
 

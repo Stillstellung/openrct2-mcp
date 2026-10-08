@@ -10,6 +10,7 @@ from pyrct2.world._tile import Tile
 
 from openrct2_mcp.bridge_fast import get_ride_raw
 from openrct2_mcp.connection import RideBuilderClient
+from openrct2_mcp.connection import tile_data, tiles_in
 
 
 def _station_tile(station: dict) -> tuple[int, int] | None:
@@ -129,7 +130,7 @@ def footpath_grid(game: RCT2, tx: int, ty: int, radius: int) -> tuple[list[str],
     """
     markers: dict[tuple[int, int], str] = {}
     try:
-        tiles = game.world.get_tiles(Tile(tx - radius, ty - radius), Tile(tx + radius, ty + radius))
+        tiles = tiles_in(game, tx - radius, ty - radius, tx + radius, ty + radius)
         for td in tiles:
             mark = tile_marker(list(td.elements))
             if mark != ".":
@@ -168,7 +169,7 @@ def area_context(
     nearby = rides_near(game, ride_builder, tile_x, tile_y, radius * 2, model=model)
 
     try:
-        tile_data = game.world.get_tile(Tile(tile_x, tile_y))
+        tile_data = tile_data(game, tile_x, tile_y)
         surface = next((e for e in tile_data.elements if e.type == "surface"), None)
         surface_info = {
             "element_count": len(tile_data.elements),

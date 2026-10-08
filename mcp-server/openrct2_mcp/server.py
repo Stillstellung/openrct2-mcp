@@ -113,6 +113,7 @@ from openrct2_mcp.ride_ops import (
     set_ride_inspection_interval,
     set_ride_mode,
 )
+from openrct2_mcp.connection import raw_tile
 from openrct2_mcp.connection import SESSION, ConnectionError, ensure_paused, ensure_unpaused, game_context
 from openrct2_mcp.time_tools import (
     advance_ticks_with_speed,
@@ -767,7 +768,7 @@ def _place_path_3d(
     from openrct2_mcp.path_connectivity import analyze_path_connectivity, summarize_connectivity
 
     def ground_z(x: int, y: int) -> int:
-        raw = game._query("get_tile", {"x": x, "y": y})
+        raw = raw_tile(game, x, y)
         surf = next((e for e in raw.get("elements", []) if e.get("type") == "surface"), {})
         return int(surf.get("baseZ", 0)) // 8
 
@@ -2170,7 +2171,7 @@ def build_maze_tool(
 
 
 def _surface_base_z(game: RCT2, x: int, y: int) -> int:
-    raw = game._query("get_tile", {"x": x, "y": y})
+    raw = raw_tile(game, x, y)
     return int(next(e for e in raw["elements"] if e.get("type") == "surface")["baseZ"])
 
 
@@ -2199,7 +2200,7 @@ def landscape_tool(
     heights, one per terrace level), or "lawns" (tree grid every `spacing` tiles
     inside open lawns with a centrepiece per lawn). Only empty, owned, flat grass is
     planted, never beside ride entrances, exits or queues. budget is in money units
-    ($1 = 10). Scanning costs about 25 ms per tile; keep rectangles focused.
+    ($1 = 10). Reads the cached map, so whole-park plans take well under a second.
     """
     from openrct2_mcp.landscaping import apply_plan, lawn_plan, path_border_plan, scan_area, terrace_plan
 
@@ -2207,7 +2208,7 @@ def landscape_tool(
     with game_context() as game:
         ensure_paused(game)
         x1, y1, x2, y2 = _resolve_rect(area, x1, y1, x2, y2)
-        tiles = scan_area(game, x1, y1, x2, y2)
+        tiles = scan_area(game, x1, y1, x2, y2, model=SESSION.map)
         if area:
             from openrct2_mcp.areas import area_tiles
 
@@ -2973,7 +2974,7 @@ def coaster_generate_freeform_tool(
     from openrct2_mcp.coaster_freeform import generate, render_ascii, terrain_from_game
 
     with game_context() as game:
-        terrain = terrain_from_game(game, x1, y1, x2, y2)
+        terrain = terrain_from_game(game, x1, y1, x2, y2, model=SESSION.map)
         terrain.allow_tunnels = allow_tunnels
         if station_z is None:
             station_z = terrain.ground.get((station_x, station_y), 12)

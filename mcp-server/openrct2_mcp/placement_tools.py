@@ -15,6 +15,7 @@ from openrct2_mcp.land_tools import find_open_land
 from openrct2_mcp.path_connectivity import assert_tile_adjacent_to_entrance_network
 from openrct2_mcp.tower_rides import is_tower_ride, tower_ride_message
 from openrct2_mcp.units import surface_owned
+from openrct2_mcp.connection import tile_data
 
 # Maximum surface baseZ mismatch between stall pad and adjacent guest path, in z units
 # (8 = 1 tile_z, half a land step).
@@ -33,7 +34,7 @@ def path_base_z_to_land_set_height(path_base_z: int) -> int:
 
 def is_guest_footpath_tile(game: RCT2, path_x: int, path_y: int) -> bool:
     """True when the tile has a non-queue guest footpath element."""
-    td = game.world.get_tile(Tile(path_x, path_y))
+    td = tile_data(game, path_x, path_y)
     for elem in td.elements:
         if getattr(elem, "type", None) != "footpath":
             continue
@@ -45,7 +46,7 @@ def is_guest_footpath_tile(game: RCT2, path_x: int, path_y: int) -> bool:
 
 def guest_footpath_zs_on_tile(game: RCT2, path_x: int, path_y: int) -> list[int]:
     """All non-queue guest footpath baseZ values on a tile."""
-    td = game.world.get_tile(Tile(path_x, path_y))
+    td = tile_data(game, path_x, path_y)
     zs: list[int] = []
     for elem in td.elements:
         if getattr(elem, "type", None) != "footpath":
@@ -58,7 +59,7 @@ def guest_footpath_zs_on_tile(game: RCT2, path_x: int, path_y: int) -> list[int]
 
 def walkable_guest_path_z(game: RCT2, path_x: int, path_y: int) -> int:
     """Footpath baseZ guests actually use on a flat tile (matches surface, not under a bridge)."""
-    path_tile = game.world.get_tile(Tile(path_x, path_y))
+    path_tile = tile_data(game, path_x, path_y)
     surface_z = int(path_tile.surface.baseZ)
     guest_zs = guest_footpath_zs_on_tile(game, path_x, path_y)
     if not guest_zs:
@@ -81,7 +82,7 @@ def walkable_guest_path_z(game: RCT2, path_x: int, path_y: int) -> int:
 
 def footpath_base_z_at(game: RCT2, path_x: int, path_y: int) -> int:
     """Return walkable baseZ of guest footpath on a flat tile."""
-    path_tile = game.world.get_tile(Tile(path_x, path_y))
+    path_tile = tile_data(game, path_x, path_y)
     if int(path_tile.surface.slope) != 0:
         # Sloped tiles may still carry walkable path; use lowest guest footpath height.
         guest_zs = guest_footpath_zs_on_tile(game, path_x, path_y)
@@ -111,7 +112,7 @@ def validate_stall_site(
             "(queue lines and slopes are invalid stall fronts)"
         )
 
-    path_tile = game.world.get_tile(Tile(path_x, path_y))
+    path_tile = tile_data(game, path_x, path_y)
     if int(path_tile.surface.slope) != 0:
         raise ValueError(
             f"Cannot place stall facing sloped path ({path_x},{path_y}) — use a flat walkway"
@@ -129,7 +130,7 @@ def validate_stall_site(
 
     path_base_z = footpath_base_z_at(game, path_x, path_y)
 
-    stall_tile = game.world.get_tile(Tile(stall_x, stall_y))
+    stall_tile = tile_data(game, stall_x, stall_y)
     if int(stall_tile.surface.slope) != 0:
         raise ValueError(f"Stall pad ({stall_x},{stall_y}) must be flat land, not a slope")
     if not surface_owned(stall_tile.surface):
@@ -207,7 +208,7 @@ def find_stall_sites(
         if (path_x, path_y) not in path_z_cache:
             try:
                 if not is_guest_footpath_tile(game, path_x, path_y) or int(
-                    game.world.get_tile(Tile(path_x, path_y)).surface.slope
+                    tile_data(game, path_x, path_y).surface.slope
                 ) != 0:
                     path_z_cache[(path_x, path_y)] = None
                 else:
@@ -346,7 +347,7 @@ def front_tile_clear(game: RCT2, tile: tuple[int, int], ride_z: int) -> bool:
     scenery element on it.
     """
     try:
-        td = game.world.get_tile(Tile(tile[0], tile[1]))
+        td = tile_data(game, tile[0], tile[1])
     except Exception:
         return False
     footpaths = [e for e in td.elements if getattr(e, "type", None) == "footpath"]
@@ -470,7 +471,7 @@ def place_ride_at_best_tile(
         origin = site["origin"]
         tx, ty = origin[0] + 1 - min_dx, origin[1] + 1 - min_dy
         footprint = [(x + tx, y + ty) for x, y in base]
-        ride_z = int(game.world.get_tile(Tile(tx, ty)).surface.baseZ)
+        ride_z = int(tile_data(game, tx, ty).surface.baseZ)
         front_cache: dict[tuple[int, int], bool] = {}
 
         def front_ok(front: tuple[int, int], ride_z: int = ride_z, cache=front_cache) -> bool:

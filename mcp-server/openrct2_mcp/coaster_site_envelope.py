@@ -14,6 +14,7 @@ from typing import Any
 from pyrct2.client import RCT2
 from pyrct2.world._tile import Tile
 from openrct2_mcp.units import surface_owned, surface_underwater
+from openrct2_mcp.connection import model_for, tiles_in
 
 ENVELOPE_VERSION = 2
 
@@ -52,7 +53,10 @@ def _rle_row(values: list[int]) -> list[list[int]]:
 
 
 def _guest_path_tiles(game: RCT2) -> set[tuple[int, int]]:
-    """Bulk-first guest path tiles, cached for the session (bench/bin perf pattern)."""
+    """Guest (non-queue) path tiles: from the live map model, else bulk scan cached 45 s."""
+    model = model_for(game)
+    if model is not None:
+        return {(x, y) for x, y, p in model.all_paths() if not p.queue}
     now = time.monotonic()
     if _PATH_TILE_CACHE["tiles"] is not None and now - _PATH_TILE_CACHE["ts"] < _ENVELOPE_CACHE_TTL_SEC:
         return _PATH_TILE_CACHE["tiles"]
@@ -137,7 +141,9 @@ def build_site_envelope(
     y2 = min(bounds.y - 2, center_y + radius)
     bbox = (x1, y1, x2, y2)
 
-    cache_key = f"{x1},{y1},{x2},{y2}"
+    model = model_for(game)
+    # With the live map model the key includes its revision, so any map change misses.
+    cache_key = f"{x1},{y1},{x2},{y2}" + (f"@{model.session_id}:{model.revision}" if model is not None else "")
     now = time.monotonic()
     if (
         _ENVELOPE_CACHE["key"] == cache_key
@@ -156,7 +162,7 @@ def build_site_envelope(
             ty1 = min(ty0 + ENVELOPE_TILE_CHUNK - 1, y2)
             for attempt in (1, 2):
                 try:
-                    for tile in game.world.get_tiles(Tile(tx0, ty0), Tile(tx1, ty1)):
+                    for tile in tiles_in(game, tx0, ty0, tx1, ty1):
                         tile_map[(tile.x, tile.y)] = tile
                     break
                 except Exception:

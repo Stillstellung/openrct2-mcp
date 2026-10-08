@@ -27,6 +27,7 @@ from openrct2_mcp.design_lint import (
     load_segments,
     piece_footprint_tiles,
 )
+from openrct2_mcp.connection import raw_tile
 
 # Vertical room a train needs above its track base, and the gap two pieces of the
 # same ride need when one crosses over the other on a tile.
@@ -448,17 +449,21 @@ def terrain_from_game(
     *,
     fly_over_paths: bool = True,
     ride_id: int | None = None,
+    model: Any = None,
 ) -> Terrain:
     """Terrain mask for an owned rectangle: ground z per owned tile, obstacle tops.
 
     Paths, scenery and other rides become obstacles the track may fly over (base
-    above their top) but not touch. Unowned tiles are excluded.
+    above their top) but not touch. Unowned tiles are excluded. With a map model
+    (openrct2_mcp.map_model) the rectangle is read from the cache in one go.
     """
+    if model is not None:
+        return terrain_from_model(model, x1, y1, x2, y2, fly_over_paths=fly_over_paths, ride_id=ride_id)
     ground: dict[tuple[int, int], int] = {}
     tops: dict[tuple[int, int], int] = {}
     for x in range(x1, x2 + 1):
         for y in range(y1, y2 + 1):
-            raw = game._query("get_tile", {"x": x, "y": y})
+            raw = raw_tile(game, x, y)
             els = raw.get("elements", [])
             surface = next((e for e in els if e.get("type") == "surface"), None)
             if surface is None or not (int(surface.get("ownership", 0)) & 0x20 or surface.get("hasOwnership")):
@@ -480,6 +485,45 @@ def terrain_from_game(
                 top = t if top is None else max(top, t)
             if top is not None:
                 tops[(x, y)] = top
+    return Terrain(ground, tops)
+
+
+# Clearance above a path or ride entrance base (tile_z), used when a tile's
+# combined top must be rebuilt without one ride's own track.
+PATH_CLEARANCE_Z = 4
+ENTRANCE_CLEARANCE_Z = 6
+
+
+def terrain_from_model(
+    model: Any,
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    *,
+    fly_over_paths: bool = True,
+    ride_id: int | None = None,
+) -> Terrain:
+    """terrain_from_game, read from the cached map model."""
+    ground: dict[tuple[int, int], int] = {}
+    tops: dict[tuple[int, int], int] = {}
+    for t in model.iter_rect(x1, y1, x2, y2):
+        if not t.owned:
+            continue
+        g = t.ground + (2 if t.slope & 0x0F else 0)
+        ground[(t.x, t.y)] = g
+        if t.paths and not fly_over_paths:
+            tops[(t.x, t.y)] = 255
+            continue
+        if ride_id is not None and any(tr.ride == ride_id for tr in t.track):
+            parts = [tr.top for tr in t.track if tr.ride != ride_id]
+            parts += [s.top for s in t.scenery]
+            parts += [p.z + PATH_CLEARANCE_Z for p in t.paths]
+            parts += [e.z + ENTRANCE_CLEARANCE_Z for e in t.entrances if e.ride != ride_id]
+            if parts:
+                tops[(t.x, t.y)] = max(parts)
+        elif t.top:
+            tops[(t.x, t.y)] = t.top
     return Terrain(ground, tops)
 
 

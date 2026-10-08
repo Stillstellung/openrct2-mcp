@@ -10,6 +10,7 @@ from pyrct2.world._tile import Tile
 
 from openrct2_mcp.connection import RideBuilderClient
 from openrct2_mcp.units import surface_owned
+from openrct2_mcp.connection import tiles_in
 
 MAX_REGION_SIDE = 64
 # ride-builder getElementsInRect clamps each side to 40.
@@ -231,7 +232,7 @@ def find_buildable_loop(
     x2 = origin_x + width - 1
     y2 = origin_y + height - 1
 
-    tiles = game.world.get_tiles(Tile(origin_x, origin_y), Tile(x2, y2))
+    tiles = tiles_in(game, origin_x, origin_y, x2, y2)
     unowned = []
     non_flat = []
     for t in tiles:

@@ -12,6 +12,7 @@ from pyrct2.result import ActionResult
 from openrct2_mcp.bridge_fast import get_ride_raw, list_rides_fast
 from openrct2_mcp.connection import RideBuilderClient, SESSION, ensure_paused
 from openrct2_mcp.time_tools import advance_ticks_with_speed, game_speed_label
+from openrct2_mcp.connection import raw_tile
 
 INSPECTION_MINUTES: dict[int, RideInspection] = {
     10: RideInspection.EVERY10_MINUTES,
@@ -145,7 +146,7 @@ def replace_track_piece(
     raw_ride = get_ride_raw(game, ride_id)
     if raw_ride is None:
         raise ValueError(f"Ride {ride_id} not found")
-    tile = game._query("get_tile", {"x": tile_x, "y": tile_y})
+    tile = raw_tile(game, tile_x, tile_y)
     pieces = [
         el for el in tile.get("elements", [])
         if el.get("type") == "track" and el.get("ride") == ride_id

@@ -13,6 +13,7 @@ from typing import Any
 from pyrct2.client import RCT2
 
 from openrct2_mcp.path_build import DELTAS, parse_direction
+from openrct2_mcp.connection import raw_tile
 
 # Ride types whose only track group is TOWER (pyrct2 RIDE_TYPE_ENABLED_GROUPS).
 TOWER_RIDE_TYPES = {"observation_tower": 14, "launched_freefall": 12, "lift": 43, "roto_drop": 69}
@@ -69,7 +70,7 @@ def plan_tower(
 
 
 def _surface_base_z(game: RCT2, x: int, y: int) -> int:
-    raw = game._query("get_tile", {"x": x, "y": y})
+    raw = raw_tile(game, x, y)
     surface = next((e for e in raw.get("elements", []) if e.get("type") == "surface"), None)
     if surface is None:
         raise ValueError(f"No land surface at ({x},{y})")

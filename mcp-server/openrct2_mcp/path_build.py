@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from pyrct2.client import RCT2
+from openrct2_mcp.connection import raw_tile
 
 # Direction numbers match the game: 0 = -x (west), 1 = +y, 2 = +x, 3 = -y.
 DIRECTIONS = {"WEST": 0, "NORTH": 1, "EAST": 2, "SOUTH": 3}
@@ -76,7 +77,7 @@ def plan_ramp(
 
 
 def _surface(game: RCT2, x: int, y: int) -> dict[str, Any]:
-    raw = game._query("get_tile", {"x": x, "y": y})
+    raw = raw_tile(game, x, y)
     return next((e for e in raw.get("elements", []) if e.get("type") == "surface"), {})
 
 
@@ -165,7 +166,7 @@ def remove_paths_at(game: RCT2, x: int, y: int, z: int | None = None) -> int:
 
     pyrct2's remove only finds ground-level paths, so bridge decks and tunnels need this.
     """
-    raw = game._query("get_tile", {"x": x, "y": y})
+    raw = raw_tile(game, x, y)
     removed = 0
     for el in raw.get("elements", []):
         if el.get("type") != "footpath":

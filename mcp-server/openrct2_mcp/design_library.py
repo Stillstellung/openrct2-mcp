@@ -31,6 +31,7 @@ from openrct2_mcp.track_errors import (
     parse_track_failure,
     track_error_hint,
 )
+from openrct2_mcp.connection import raw_tile
 
 TEST_POLL_SECONDS = 5
 TEST_POLL_ATTEMPTS = 12
@@ -59,7 +60,7 @@ def _guest_side_blocked(game: RCT2, guest_x: int, guest_y: int, z: int) -> bool:
     Track, scenery or other rides overlapping path height there leave the entrance
     unreachable.
     """
-    raw = game._query("get_tile", {"x": guest_x, "y": guest_y})
+    raw = raw_tile(game, guest_x, guest_y)
     for el in raw.get("elements", []):
         if el.get("type") in ("surface", "footpath"):
             continue
@@ -91,7 +92,7 @@ def _ground_lookup(ground_z: GroundZ | None) -> Callable[[int, int], int | None]
 
 
 def _surface_element(game: RCT2, x: int, y: int) -> dict[str, Any] | None:
-    raw = game._query("get_tile", {"x": x, "y": y})
+    raw = raw_tile(game, x, y)
     return next((e for e in raw.get("elements", []) if e.get("type") == "surface"), None)
 
 

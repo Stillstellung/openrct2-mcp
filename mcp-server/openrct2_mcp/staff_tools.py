@@ -10,6 +10,7 @@ from pyrct2.world._tile import Tile
 
 from openrct2_mcp.map_region import get_path_graph
 from openrct2_mcp.units import surface_owned
+from openrct2_mcp.connection import tile_data
 
 # Handyman order bitflags (OpenRCT2)
 HANDYMAN_SWEEPING = 1
@@ -122,7 +123,7 @@ def _is_safe_deploy_path_tile(
     if (tx, ty) not in path_set:
         return False
     try:
-        tile = game.world.get_tile(Tile(tx, ty))
+        tile = tile_data(game, tx, ty)
     except Exception:
         return False
     if not surface_owned(tile.surface):

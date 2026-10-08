@@ -12,6 +12,7 @@ import random
 from typing import Any
 
 from pyrct2.client import RCT2
+from openrct2_mcp.connection import raw_tile
 
 DELTA = {0: (-1, 0), 1: (0, 1), 2: (1, 0), 3: (0, -1)}
 MAZE_RIDE_TYPE = 20
@@ -60,7 +61,7 @@ def build_maze(
     and exit tiles (cells are half-tile coordinates relative to the corner).
     """
     if z is None:
-        raw = game._query("get_tile", {"x": tile_x, "y": tile_y})
+        raw = raw_tile(game, tile_x, tile_y)
         surface = next(e for e in raw["elements"] if e.get("type") == "surface")
         z = int(surface["baseZ"])
     created = game.execute("ridecreate", {

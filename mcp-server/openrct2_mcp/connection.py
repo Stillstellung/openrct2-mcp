@@ -286,6 +286,60 @@ class GameSession:
 SESSION = GameSession()
 
 
+
+def model_for(game: Any):
+    """The session's cached map model when ``game`` is the session's live game, else None.
+
+    Map readers call this so they use the fast cache in the running server while
+    tests (fake games) and other callers keep their direct reads.
+    """
+    if game is None or game is not SESSION._game:
+        return None
+    try:
+        model = SESSION.map
+        model.sync()
+        return model
+    except Exception:  # noqa: BLE001 - older plugin without snapshots: fall back
+        return None
+
+
+def raw_tile(game: Any, x: int, y: int) -> dict[str, Any]:
+    """``get_tile`` as raw element dicts, served from the cached map when possible."""
+    model = model_for(game)
+    if model is not None:
+        from openrct2_mcp.map_model import raw_elements
+
+        view = model.tile(x, y)
+        if view is not None:
+            return {"x": x, "y": y, "elements": raw_elements(view)}
+    return game._query("get_tile", {"x": x, "y": y})
+
+
+def tile_data(game: Any, x: int, y: int) -> Any:
+    """One tile like pyrct2 ``world.get_tile`` (cached-map view when possible)."""
+    model = model_for(game)
+    if model is not None:
+        from openrct2_mcp.map_model import TileDataView
+
+        view = model.tile(x, y)
+        if view is not None:
+            return TileDataView(view)
+    from pyrct2.world._tile import Tile
+
+    return game.world.get_tile(Tile(x, y))
+
+
+def tiles_in(game: Any, x1: int, y1: int, x2: int, y2: int) -> list[Any]:
+    """Tiles in a rect like pyrct2 ``world.get_tiles`` (cached-map views when possible)."""
+    model = model_for(game)
+    if model is not None:
+        from openrct2_mcp.map_model import TileDataView
+
+        return [TileDataView(v) for v in model.iter_rect(x1, y1, x2, y2)]
+    from pyrct2.world._tile import Tile
+
+    return game.world.get_tiles(Tile(x1, y1), Tile(x2, y2))
+
 @contextmanager
 def game_context() -> Generator[RCT2, None, None]:
     # Each tool call starts by checking the change feed (player edits included).

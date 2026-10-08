@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 from pyrct2.client import RCT2
+from openrct2_mcp.connection import raw_tile
 
 CARDINAL = ((1, 0), (-1, 0), (0, 1), (0, -1))
 OWNED_BIT = 0x20
@@ -29,11 +30,20 @@ class TileInfo:
     entrance: bool = False  # ride entrance/exit or park gate
 
 
-def scan_area(game: RCT2, x1: int, y1: int, x2: int, y2: int) -> dict[tuple[int, int], TileInfo]:
+def scan_area(game: RCT2, x1: int, y1: int, x2: int, y2: int, model=None) -> dict[tuple[int, int], TileInfo]:
+    """One TileInfo per tile in the rect (from the cached map model when given)."""
+    if model is not None:
+        return {
+            (t.x, t.y): TileInfo(
+                z=t.ground, flat=t.flat, owned=t.owned, water=t.underwater, empty=t.empty,
+                path_z=t.path_z, queue=t.queue, entrance=bool(t.entrances),
+            )
+            for t in model.iter_rect(x1, y1, x2, y2)
+        }
     tiles: dict[tuple[int, int], TileInfo] = {}
     for x in range(x1, x2 + 1):
         for y in range(y1, y2 + 1):
-            els = game._query("get_tile", {"x": x, "y": y}).get("elements", [])
+            els = raw_tile(game, x, y).get("elements", [])
             surface = next((e for e in els if e.get("type") == "surface"), None)
             if surface is None:
                 continue
