@@ -78,7 +78,7 @@ Claude Code  --MCP-->  Python MCP server  --TCP-->  openrct2-bridge (park ops)
 | Component | Role |
 |-----------|------|
 | [openrct2-bridge](https://github.com/MaukWM/openrct2-bridge) | 82 game actions, 77 state queries via [pyrct2](https://pypi.org/project/pyrct2/) |
-| `ride-builder.js` | Coaster-specific TCP API (valid pieces, place track, test ratings) |
+| `ride-builder.js` | Coaster-specific TCP API (valid pieces, place track, test ratings), bulk map snapshots and the map change feed |
 | `mcp-server/openrct2_mcp` | Curated MCP tools wrapping both plugins |
 
 ## MCP tools
@@ -102,7 +102,7 @@ Claude Code  --MCP-->  Python MCP server  --TCP-->  openrct2-bridge (park ops)
 | `assign_staff_to_path_corridor_tool` | Patrol box covering path tiles |
 | `optimize_staff_coverage_tool` | Hire + assign staff along main paths |
 | `park_health_report_tool` | Complaints, low satisfaction, recommendations |
-| `get_map_bounds_tool` / `get_map_region_tool` | Park-scale spatial grids |
+| `get_map_bounds_tool` / `get_map_region_tool` | Park-scale spatial grids (up to 64x64, tile_z heights, `area=`) |
 | `get_path_graph_tool` / `find_buildable_loop_tool` | Path graph and build surveys |
 | `apply_theme_preset_tool` | Theme along paths (see `themes/cute.json`) |
 | `place_small_scenery_tool` / `paint_terrain_tool` | Decoration and terrain |
@@ -156,6 +156,28 @@ Use `get_tile_height_tool` for a single tile; `coaster_height_context_tool` for 
 4. `coaster_build_perimeter(dry_run=true)` → `coaster_build_perimeter` — execute build
 
 Terminal debug (no MCP): `.venv/bin/python scripts/plan-coaster-route.py --simulate --inset 18` (Windows: `.venv\Scripts\python.exe scripts\plan-coaster-route.py ...`; set `PYTHONUTF8=1` if output is piped)
+
+## Mapping
+
+Every map read goes through one cached **map model**. The ride-builder plugin
+returns the map in 64x64 chunks (the whole 128x128 Forest Frontiers map loads in
+about 0.3 s; reading it one tile at a time took about 400 s). It also records
+which tiles every game action touches, whether the action came from the player,
+the bridge or a plugin. The server checks that change feed at the start of each
+tool call and after its own writes, and reloads only the chunks that changed.
+Heights are **tile_z** (`baseZ // 8`) everywhere; see `openrct2_mcp/units.py`.
+
+| Tool | What it does |
+|------|--------------|
+| `render_map_tool` | Top-down map image (plan view, +x right, +y down, tile numbers every 5/10): heights, terraces, water, unowned land, paths, queues, bridges/tunnels, rides with names, doors, trees, flower beds, named areas. Overlays draw planned work; `highlight_ride` outlines a ride, its doors and queue |
+| `preview=true` | On `landscape_tool`, `build_maze_tool`, `manage_paths` (line, ramp, tile) and `coaster_generate_freeform_tool`: returns the plan drawn on the map instead of building |
+| `get_ride_location_tool` / `list_ride_locations_tool` | Ride footprint, entrance/exit with facing, queue walked along its path edges, the path it joins, and issues (missing doors, doors with no path) |
+| `map_checkpoint_tool` / `map_diff_tool` | Freeze a rectangle, build, then list exactly what changed (ground, paths, track, doors, scenery) and what it cost |
+| `define_area_tool` / `list_areas_tool` / `remove_area_tool` / `suggest_areas_tool` | Named areas per park; most rectangle tools accept `area="East Gardens"` |
+| `get_recent_actions_tool` | Last game actions with player and cost (what did the player just do?) |
+| `terraform_region_tool(dry_run=true)` | Prices every tile with the game's own action query before paying |
+
+Areas are stored in `<OpenRCT2 user folder>/openrct2-mcp/areas/<park>.json`.
 
 ## Vision (screenshots + spatial context)
 
@@ -224,7 +246,7 @@ The MCP server avoids the worst patterns:
 | `rides` (all at once) | `listAllRides` + `rides?id=N` per ride |
 | `guests` (all peeps) | `park.guests` count + `get_guest(id)` |
 | `game.state.park()` for overview | Scalar `park.name`, `park.rating`, `park.cash`, … |
-| Tile-by-tile map scans | Not exposed via MCP (too many round-trips) |
+| Tile-by-tile map scans (about 25 ms per tile) | Cached map model: 64x64 snapshots plus a change feed (`map_model.py`) |
 | Footpath scan (fill benches/bins) | `get_elements_by_type("footpath")` bulk first; tile chunk fallback |
 
 `list_guests` defaults to **guest count only**. Pass `full_scan=true` only if you accept a long wait.

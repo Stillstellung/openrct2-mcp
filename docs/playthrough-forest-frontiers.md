@@ -408,3 +408,47 @@ All of these were fixed after phase 2 (see the commit that follows this log):
   lawns added 7 trees and fountains for $205.
 - **Terraform pricing:** the dry run on a 4x4 lawn costs $272 to lift 2 tile_z, $900 to
   lift 6. Cost grows faster than height, which explains the Lookout Hill bill.
+
+## Phase 8: mapping overhaul
+
+The agent's map reading was the slowest and most error-prone part of every build:
+about 25 ms per tile, about 60 call sites each reading tiles their own way, 45 s
+caches that went stale after a build, and no picture of the park other than
+isometric screenshots that change with the camera.
+
+- **Bulk snapshots.** A new ride-builder endpoint returns 64x64 tiles per call:
+  ground, slope, owned, water, top-of-obstacles as dense arrays, plus paths,
+  track, doors and scenery. The whole 128x128 map loads in **0.26-0.32 s**,
+  against about 400 s tile by tile. Matched `get_tile` on 50 random tiles.
+- **Always current.** The plugin subscribes to `action.execute` and records the
+  tiles each action touched under a revision number. The server checks it at the
+  start of every tool call and after its own writes; a flower bed placed through
+  the bridge showed up on the next read (one 64x64 chunk reloaded in 0.1 s).
+- **Readers moved over.** All 30 direct tile reads now use the cache through
+  small adapters. Freeform coaster terrain and landscaping scans went from 10 s
+  to 0.05-0.23 s for a 20x20 area. Stall site search 2 s -> 0.1 s. Old-vs-new
+  outputs were compared tool by tool and matched.
+- **Ride index.** Footprint, doors with facing and guest-side path, queue walked
+  along path edges, and the path it joins, for every ride. Confirmed live:
+  every ride connects (Timber Rattler's queue is 14 tiles, Mole Hole's 18).
+- **Map image.** A plan-view PNG with no extra libraries: height shading, terrace
+  lines, water, unowned land, paths, queues, bridges and tunnels, rides in
+  colours that never match a neighbour, names, doors, trees, flower beds and
+  named areas. Whole park in 0.15 s. Planned work draws on top (previews).
+- **Diffs, areas, recent actions.** Checkpoint a rect, build, diff it (counts,
+  per-tile changes, money spent). Named areas per park live in the OpenRCT2 user
+  folder. Seeded: Lookout Hill, Maze Gardens, Serpent of the Pines, South Lawn.
+
+Bugs found on the way:
+
+| Bug | Fix |
+|---|---|
+| 12 sites tested `surface.ownership` for truthiness, so land for sale and construction-rights-only tiles counted as owned | `units.surface_owned` (bit 0x20 or `hasOwnership`) |
+| The coaster site envelope compared `waterHeight` (z units) to `baseHeight` (tile_z), flagging dry land as water | `units.surface_underwater` |
+| Direction comments said 1 = north; ASCII grids printed rows in opposite orders | one convention: 0 = -x, 1 = +y, 2 = +x, 3 = -y; lowest y first |
+| Owned land also carries the construction-rights bit (empty grass is flags 3, not 1) | model exposes `owned` and `construction_rights` separately |
+| Excluding a ride's own track from obstacle tops also dropped its queue paths (queue elements carry the ride id) | the model keeps queues as obstacles |
+
+Still open: the ride-builder's own full-map scan in `findStationPieces` (only
+used when a ride has no stations) still loops in the plugin; and manual edits in
+the game UI are tracked through the same hook but were not tested by hand.

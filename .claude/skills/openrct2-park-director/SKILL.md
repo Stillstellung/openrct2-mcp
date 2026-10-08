@@ -247,6 +247,16 @@ Use low-level survey tools only when auto-build fails or user asks for step-by-s
 - Use `inspect_area_at_tile` for ASCII path grids + optional screenshot
 - `focus_camera_tool(tile_x, tile_y, zoom, rotation)` centres the view and captures; `crop=0.4` keeps native resolution on 4K screens
 
+## Mapping
+
+- **Look before building:** `render_map_tool()` shows the whole park top-down (+x right, +y down, tile numbers on the edges), independent of the game camera. Use it instead of screenshots for planning; use `focus_camera_tool` to check how a build looks in the game
+- **Preview plans:** pass `preview=true` to `landscape_tool`, `build_maze_tool`, `manage_paths` (line/ramp/tile) and `coaster_generate_freeform_tool`, or draw anything with `render_map_tool(overlay_json=...)`
+- **Ride questions:** `get_ride_location_tool(id)` / `list_ride_locations_tool(only_issues=true)` give footprints, doors (with the guest-side path), queues and problems; `render_map_tool(highlight_ride=id)` shows them
+- **Checkpoint around big edits:** `map_checkpoint_tool(name, area=...)`, build, then `map_diff_tool(name, image=true)` for exactly what changed and what it cost. Terraform, clear-area and 3D path builds report `changes` automatically
+- **Name places:** `define_area_tool("East Gardens", ...)`, then pass `area=` to render, landscape, terraform, clear-area, checkpoint and region tools. `suggest_areas_tool` proposes names
+- **Units:** heights are tile_z everywhere (1 land step = 2 tile_z). Directions: 0 = -x, 1 = +y, 2 = +x, 3 = -y. ASCII grids print lowest y first
+- `get_recent_actions_tool` shows what the player just did in the game
+
 ## Landscaping and mazes
 
 - Flower beds: small scenery `rct2.scenery_small.tg1`-`tg14` (full tile) and `tg15`-`tg21` (quarter clumps). All are named "Gardens", so pick by identifier; `list_scenery_objects_tool(search="garden")`
