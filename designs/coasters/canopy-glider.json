@@ -1,0 +1,202 @@
+{
+ "template_version": 1,
+ "name": "canopy-glider",
+ "slug": "canopy-glider",
+ "notes": "",
+ "prompt": "",
+ "mood": "",
+ "ratings": {
+  "excitement": 2.56,
+  "intensity": 2.95,
+  "nausea": 3.02
+ },
+ "validated": true,
+ "lint_ok": true,
+ "stats": {
+  "piece_count": 48,
+  "station_pieces": 5,
+  "footprint_bbox": [
+   70,
+   20,
+   74,
+   44
+  ],
+  "footprint_size": [
+   5,
+   25
+  ],
+  "max_z_above_station": 14,
+  "peak_piece_index": 11,
+  "endpoint": {
+   "x": 74,
+   "y": 41,
+   "z": 12,
+   "direction": 3
+  }
+ },
+ "created_at": "2026-10-08T11:21:37",
+ "design": {
+  "version": 1,
+  "ride_type": 2,
+  "pieces": [
+   {
+    "track_type": 2
+   },
+   {
+    "track_type": 3
+   },
+   {
+    "track_type": 3
+   },
+   {
+    "track_type": 3
+   },
+   {
+    "track_type": 6,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 4,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 9,
+    "has_chain_lift": true
+   },
+   {
+    "track_type": 12
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 10
+   },
+   {
+    "track_type": 15
+   },
+   {
+    "track_type": 43
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 43
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 6
+   },
+   {
+    "track_type": 9
+   },
+   {
+    "track_type": 12
+   },
+   {
+    "track_type": 15
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 6
+   },
+   {
+    "track_type": 9
+   },
+   {
+    "track_type": 12
+   },
+   {
+    "track_type": 15
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 6
+   },
+   {
+    "track_type": 9
+   },
+   {
+    "track_type": 12
+   },
+   {
+    "track_type": 15
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 43
+   },
+   {
+    "track_type": 0
+   },
+   {
+    "track_type": 43
+   },
+   {
+    "track_type": 1
+   }
+  ],
+  "origin": {
+   "x": 74,
+   "y": 41,
+   "z": 12,
+   "direction": 3
+  }
+ }
+}

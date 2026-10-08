@@ -150,3 +150,122 @@ All of these were fixed after phase 2 (see the commit that follows this log):
   fix-up agent (130 tests pass); not yet exercised against the live game.
 - `get_park_messages` returned nothing while `park_health_report_tool` showed breakdown
   and research news (archived messages are probably filtered out).
+
+## Phase 3: 3D paths and bolder coasters
+
+- **Paths in 3D.** `manage_paths` only placed flat ground paths, so bridges and tunnels
+  were impossible through MCP. Added `path_build.py` (raw `footpathplace`): flat paths at
+  any tile_z, slope tiles (one land step = 2 tile_z per tile), `plan_ramp` for straight
+  ramps, and new `manage_paths` options (`height`, `slope`, `end_height`, `place_ramp`,
+  `excavate`).
+- **Bridges work as-is**: a humpback footbridge climbing to +6 tile_z and back placed all 11
+  tiles first try, on wooden supports.
+- **Tunnels need a cutting.** Fully underground tiles (path z <= ground - 6) place fine,
+  but ramp tiles that pass through the surface fail with "Raise or lower land first".
+  Lowering just those tiles' land to the path base (`landsetheight`) and retrying makes a
+  cutting that opens into the tunnel. `excavate=true` automates this.
+- pyrct2's `paths.remove` only removes ground-level paths; elevated tiles needed raw
+  `footpathremove` with their z (still a gap in `manage_paths remove_*`).
+- **Steep chain lifts are not allowed** on the Looping Roller Coaster: Up25ToUp60 with chain
+  failed at probe with the uninformative "Failed to place track piece: 2". 60-degree
+  *drops* are fine (12, 13, 11, 11, 14, 15 = -26 in 6 tiles).
+- **Design search beats hand design.** Brute force over loop hand, corkscrew pair, U-turn
+  style, hill count, straight length and origin, filtered by lint + an owned-tile mask, finds
+  the few layouts that fit. The 8x23 north-west pocket fit nothing with a 25-degree lift;
+  buying the for-sale east strip (x 63-73, 252 tiles, $7,050, about $28/tile) did.
+  The survey missed that a corner (x 63-66, y 26-30) was unowned too; the probe found it.
+- **Thunder Ridge** (Looping RC, 68 pieces, 7x36): +26 chain lift, 60-degree drop, vertical
+  loop, banked turnaround, corkscrew pair, three airtime hills. Excitement 5.30, intensity
+  8.80, 55 riders in its first weeks despite the intensity. Best coaster in the park.
+- **Entrance logic, live:** the new open-side preference moved the exit out of the inner lane
+  automatically. It placed entrance and exit on adjacent tiles, though; spread them to the
+  station's ends so the queue and exit path don't meet end to end.
+- **Observation Tower is a tracked ride, not a flat ride.** `place_flat_ride` and the
+  auto-placer fail ("no footprint dimensions"). Built it with raw actions: `ridecreate`
+  (type 14), Tower Base (track 66, a 3x3 platform with clearance 96) then Tower Sections
+  (track 67, 32 high each) stacked from the base's clearance top. 16 sections, excitement
+  3.66. Its entrance/exit open onto the end of the tunnel path.
+- Park at Y2 May: 618 guests, rating 891, 22 rides.
+- **Underground coaster track works.** "Mine Plunge" (Classic Mini RC, 30 pieces) leaves its
+  station at the foot of the south-east hill, dives 8 tile_z below the station into a
+  tunnel, U-turns underground and chain-lifts back out. 28 of its tiles are underground.
+  A terrain-aware search scored each layout tile as open air / tunnel / needs a cut, using
+  the live height map (surface baseZ + 2 on sloped tiles, train clearance 3 tile_z), and
+  picked the layout with the most tunnel and fewest cuts.
+- **Cuttings for track work like they do for paths.** Flattened the sloped station tiles,
+  lowered the tile where the chain lift surfaces, and the probe then placed every piece. The
+  one unplanned failure ("Failed to place track piece: 9") was a surfacing tile; digging it
+  fixed it. Track error codes are numbers only (2 = not allowed for this ride/piece,
+  9 = terrain in the way), which the tools should translate.
+- **Paths can run over buried track.** The exit path crosses directly above the tunnel
+  (path z12, track z7). The entrance enclosure check still flagged the exit as "enclosed"
+  because it treats all low track as a wall; track below ground isn't one.
+- Excitement for the mostly flat, dark tunnel ride is low (1.88); it still drew 46 riders
+  in its first two weeks. Dips and turns underground would raise it.
+- Land: bought the hill site and a corridor (about 250 tiles, $6.9k) and extended the red
+  promenade east along y=66 to reach it. The queue runs down x=70, the exit path down x=75.
+- Park at Y2 June: 813 guests, rating 842, 24 rides, about $4.1k/month net.
+
+### MCP opportunities from phase 3
+
+- `coaster_fit_design_tool` could dig automatically: when a piece fails with the terrain
+  code and the track is below ground, lower that tile and retry (as `excavate` does for
+  paths), and report the cuts.
+- A terrain-aware design scorer (open air / tunnel / cut per tile) belongs in the linter
+  when an envelope is given; it would replace the ad-hoc search script.
+- Translate track placement error codes into messages (2, 9, ...).
+- Enclosure check: ignore track whose top is below the surface (buried) and keep treating
+  high track as walk-under.
+- Tower rides (Observation Tower) need a builder: `ridecreate` + Tower Base (66) + Tower
+  Sections (67) stacked from the base's clearance top; flat-ride tools can't place them.
+- Park messages only expose an archive that stops at the last save; there are no current
+  (unarchived) items and no year, so alerts can be stale. Cross-check alerts against live
+  ride state (customers, connectivity) before recommending fixes.
+- `coaster_site_envelope_tool` still pretty-prints `ground_z_rle_rows` one number per line.
+
+## Phase 4: skywalk, suspended coaster, park upkeep
+
+- **3D paths through MCP work.** A skywalk built with three `manage_paths` calls
+  (`place_ramp` up 12 -> 20, `place_line height=20`, `place_ramp` down) passes 13 tile_z under
+  Thunder Ridge's lift and 3 above its return track, opening up the east strip. The
+  landing stalls on it sold 130+ items in a few weeks, so guests use it.
+- End a ramp on a flat tile: a stall or entrance beside the last *sloped* ramp tile is risky.
+  `place_ramp` to one tile past the descent gives a flat landing. Height-aware removal took
+  out a deck at z20 and slopes at 14-18 in one `remove_line`.
+- **`place_line` follows terrain.** On sloped land it placed tiles at z12/14/16 that don't join
+  (edges 0), and the connectivity report still called everything reachable: path
+  connectivity is height-blind. Same blindness: the auto-placer routed an entrance path
+  into the tunnel at z6 from a ground tile at z12 and reported success, and gap detection
+  flags (48,46) between a ground path and the tunnel below. Fix: compare base z (and slope
+  ends) when linking tiles; flatten or use `height=` on slopes.
+- `place_ride_at_best_tile_tool` ignores near_x/near_y when no site fits there and silently
+  places the ride across the park (Space Rings went to the NW pocket instead of the east strip).
+- **Suspended Swinging Coaster "Canopy Glider"** (ride type 2): +14 chain lift, 25-degree drop,
+  three swooping hills, 5x25 footprint along the east edge. Excitement 2.56. No 60-degree or
+  banked pieces used. Its station's outer side was on the hill's foot; entrances need flat
+  land, so placement there failed with "Raise or lower land first" and the tool fell back
+  to the enclosed inner side. Flattened x 75-76 and placed both on the outer side. The
+  open-side check should require flat land at station height.
+- Entrance and exit on the same outer side: queue from the entrance runs back to meet the
+  exit path, which feeds the network. Works well when only one side is open.
+- **Upkeep:** guest thoughts (now readable) were full of "path disgusting", litter, vandalism
+  and "sick" at 878 guests with 3 handymen; rating slid 891 -> 799 -> 781.
+  `get_complaint_hotspots_tool` reported 0 hotspots despite those thoughts. Hired 4 handymen
+  and 2 security guards, repaired 7 vandalized benches/bins. `optimize_staff_coverage_tool`
+  only zones staff it hires itself.
+- Park at Y2 August: 920 guests, 27 rides/stalls.
+- **Rating crash and recovery.** Rating fell 891 -> 588 -> **250** in Y2 (guests 925 -> 817)
+  with no breakdowns or crashes. A full guest scan (834 guests) showed why: 373
+  "path disgusting", 319 "bad litter", 107 "vandalism", 153 "crowded", 77 "sick", 204 guests
+  below happiness 64. High-nausea coasters (Thunder Ridge nausea 4.56) made vomit faster than
+  7 unzoned handymen cleaned. Fix: 13 handymen with patrol zones over the main path, coaster
+  exits and promenade; 4 security guards; 55 bins/benches added or repaired; a parallel
+  bypass path (x=54) to split the single main trunk; restroom on the bypass. Rating
+  recovered 250 -> 516 (2 weeks) -> 810 (6 weeks), avg happiness 141 -> 186.
+- Rule of thumb from this park: about 1 handyman per 25 path tiles once nauseating coasters
+  are open, zoned, not roaming; 1 security guard per ~200 guests. Watch the thought mix, not
+  the rating: the rating lags dirt by weeks and falls off a cliff.
+- Tooling gaps found: no litter/vomit count query; `get_complaint_hotspots_tool` returned 0
+  while hundreds of guests complained; aggregating thoughts over all guests (one
+  `guests.list()` call, ~1s for 800 guests) was the useful signal. A `guest_thought_summary`
+  tool should do exactly that.
