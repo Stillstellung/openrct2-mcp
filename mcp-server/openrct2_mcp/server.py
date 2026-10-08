@@ -2481,6 +2481,26 @@ def set_ride_mode_tool(ride_id: int, mode: int) -> str:
 
 
 @mcp.tool()
+def ride_setting_tool(ride_id: int, setting: str, value: int | None = None) -> str:
+    """Read or change one ride setting, showing the values the game allows for this ride.
+
+    setting: lift_hill_speed, num_circuits, min_waiting_time, max_waiting_time,
+    departure, operation, inspection_interval, music, music_type, mode.
+    Omit value to see the current value and allowed ranges (found with the game's
+    own query, so nothing changes); pass value to set it. Out-of-range values are
+    refused with the allowed ranges instead of a bare game error.
+    """
+    from openrct2_mcp.ride_ops import ride_setting
+
+    with game_context() as game:
+        ensure_paused(game)
+        result = ride_setting(game, SESSION.ride_builder, ride_id, setting, value)
+        if value is not None:
+            log_action("ride_setting", {"ride": ride_id, "setting": setting, "value": value})
+        return _json(result)
+
+
+@mcp.tool()
 def set_num_trains_tool(ride_id: int, count: int) -> str:
     """Set the number of trains; returns the trains the game actually runs.
 

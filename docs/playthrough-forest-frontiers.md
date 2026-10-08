@@ -499,5 +499,11 @@ out of cash 7.5%, wants a toilet / drink / umbrella / map about 4% each.
   8 above the south path, so access is a bought 9-tile strip: a raised landing,
   a 4-tile ramp down and a 3-tile raised queue. $7 a ride.
 - Gaps: generator obstacle tops ignored sloped paths (+2); pricing queries collide
-  with a ride's own track (price before building or after demolishing); the
-  lift-speed ride setting is rejected (value out of range) in this build.
+  with a ride's own track (price before building or after demolishing).
+- **Chain lift speed:** first tried values 10-16 blind and got "Value out of range";
+  this coaster accepts only 4-6. New `ride_setting_tool` reads a setting and its
+  allowed values (found with query-only actions) before changing it. Set to 6 for
+  shorter lift times. Ratings once fully re-rated in operation: **excitement 6.60,
+  intensity 9.57, nausea 5.16** (9.45 at speed 4, so the lift speed barely
+  matters; the 7.22 from the build test was a partial reading). 89 riders,
+  satisfaction 75.

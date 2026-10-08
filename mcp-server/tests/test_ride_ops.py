@@ -55,3 +55,33 @@ class RefurbishCandidateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_ride_setting_reports_ranges_and_refuses_out_of_range(monkeypatch):
+    import pytest
+
+    from openrct2_mcp import bridge_fast, ride_ops
+
+    state = {"liftHillSpeed": 4}
+
+    class RB:
+        def call(self, name, params):
+            assert name == "queryActions"
+            return [{"error": 0 if 4 <= a["value"] <= 6 else 1} for a in params["argsList"]]
+
+    class Game:
+        executed = []
+
+        def execute(self, name, params):
+            self.executed.append((name, params))
+            state["liftHillSpeed"] = params["value"]
+
+    monkeypatch.setattr(bridge_fast, "get_ride_raw", lambda game, ride: dict(state))
+    game = Game()
+    info = ride_ops.ride_setting(game, RB(), 43, "lift_hill_speed")
+    assert info["current"] == 4 and info["allowed"] == [[4, 6]] and not game.executed
+    with pytest.raises(ValueError, match=r"allowed: \[\[4, 6\]\]"):
+        ride_ops.ride_setting(game, RB(), 43, "lift_hill_speed", 10)
+    done = ride_ops.ride_setting(game, RB(), 43, "Lift_Hill_Speed", 6)
+    assert done["previous"] == 4 and done["current"] == 6
+    assert game.executed == [("ridesetsetting", {"ride": 43, "setting": 8, "value": 6})]

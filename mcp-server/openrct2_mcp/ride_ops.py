@@ -717,3 +717,72 @@ def optimize_ride_throughput(
         applied.append({"ride_id": rid, "name": summary.get("name"), "changes": changes})
 
     return {"dry_run": False, "applied": applied}
+
+
+# RideSetSettingType in OpenRCT2 (pyrct2 RideSetSetting).
+RIDE_SETTINGS = {
+    "mode": 0, "departure": 1, "min_waiting_time": 2, "max_waiting_time": 3, "operation": 4,
+    "inspection_interval": 5, "music": 6, "music_type": 7, "lift_hill_speed": 8, "num_circuits": 9,
+}
+# Raw ride fields holding each setting's current value.
+_SETTING_FIELDS = {
+    "mode": "mode", "departure": "departFlags", "min_waiting_time": "minimumWaitingTime",
+    "max_waiting_time": "maximumWaitingTime", "inspection_interval": "inspectionInterval",
+    "lift_hill_speed": "liftHillSpeed", "music": "music",
+}
+PROBE_MAX = 255
+
+
+def _ranges(values: list[int]) -> list[list[int]]:
+    """[1,2,3,7,8] -> [[1,3],[7,8]]"""
+    out: list[list[int]] = []
+    for v in sorted(values):
+        if out and v == out[-1][1] + 1:
+            out[-1][1] = v
+        else:
+            out.append([v, v])
+    return out
+
+
+def allowed_setting_values(ride_builder, ride_id: int, setting: str, probe_max: int = PROBE_MAX) -> list[int]:
+    """Values the game accepts for a ride setting, found with query-only actions (nothing changes)."""
+    code = RIDE_SETTINGS[setting]
+    candidates = list(range(0, probe_max + 1))
+    quotes = ride_builder.call("queryActions", {
+        "action": "ridesetsetting",
+        "argsList": [{"ride": ride_id, "setting": code, "value": v} for v in candidates],
+    })
+    return [v for v, q in zip(candidates, quotes) if not q.get("error")]
+
+
+def ride_setting(game: RCT2, ride_builder, ride_id: int, setting: str, value: int | None = None) -> dict:
+    """Show a ride setting's current value and allowed values; set it when value is given."""
+    from openrct2_mcp.bridge_fast import get_ride_raw
+
+    key = setting.strip().lower()
+    if key not in RIDE_SETTINGS:
+        raise ValueError(f"setting must be one of {sorted(RIDE_SETTINGS)}")
+    raw = get_ride_raw(game, ride_id)
+    if raw is None:
+        raise ValueError(f"Ride {ride_id} not found")
+    allowed = allowed_setting_values(ride_builder, ride_id, key)
+    field = _SETTING_FIELDS.get(key)
+    result: dict = {
+        "ride_id": ride_id,
+        "setting": key,
+        "current": raw.get(field) if field else None,
+        "allowed": _ranges(allowed),
+    }
+    if field is None:
+        result["note"] = "the bridge does not report this setting's current value"
+    elif key == "lift_hill_speed":
+        result["note"] = "game speed units; higher pulls the train up the chain faster"
+    if value is None:
+        return result
+    if value not in allowed:
+        raise ValueError(f"{key}={value} is not allowed for ride {ride_id}; allowed: {result['allowed']}")
+    game.execute("ridesetsetting", {"ride": ride_id, "setting": RIDE_SETTINGS[key], "value": value})
+    after = get_ride_raw(game, ride_id) or {}
+    result["previous"] = result.pop("current")
+    result["current"] = after.get(field) if field else value
+    return result
