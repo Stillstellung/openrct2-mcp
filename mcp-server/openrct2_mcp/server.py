@@ -439,6 +439,64 @@ def get_recent_actions_tool(limit: int = 20) -> str:
 
 
 @mcp.tool()
+def define_area_tool(name: str, x1: int, y1: int, x2: int, y2: int, notes: str = "", append: bool = False) -> str:
+    """Name a rectangle of the park ("East Gardens") so tools can take area="East Gardens".
+
+    append=true adds the rectangle to an existing area (L-shapes, several patches);
+    otherwise the area is (re)defined as this one rectangle. Areas are stored per
+    park in the OpenRCT2 user folder and drawn on render_map_tool images.
+    """
+    from openrct2_mcp import areas
+
+    with game_context():
+        key = _park_key()
+        area = areas.define(key, name, x1, y1, x2, y2, notes=notes, append=append)
+        return _json({"area": area, "bbox": list(areas.bbox(area)), "store": str(areas.store_path(key))})
+
+
+@mcp.tool()
+def list_areas_tool() -> str:
+    """Named areas defined for this park, with their rectangles and notes."""
+    from openrct2_mcp import areas
+
+    with game_context():
+        key = _park_key()
+        rows = [dict(a, bbox=list(areas.bbox(a))) for a in areas.load(key).values()]
+        return _json({"park": key, "areas": sorted(rows, key=lambda a: a["name"].lower())})
+
+
+@mcp.tool()
+def remove_area_tool(name: str, confirm_destructive: bool = False) -> str:
+    """Delete a named area (only the name; nothing in the park changes). Requires confirm_destructive=true."""
+    from openrct2_mcp import areas
+
+    require_destructive_confirm(confirm_destructive, "remove_area")
+    with game_context():
+        return _json({"removed": areas.remove(_park_key(), name), "name": name})
+
+
+@mcp.tool()
+def suggest_areas_tool(include_open_land: bool = True) -> str:
+    """Candidate areas to name: the surroundings of each ride, plus open land sites.
+
+    Nothing is saved; pass the ones you like to define_area_tool.
+    """
+    from openrct2_mcp import areas
+
+    with game_context() as game:
+        open_sites = None
+        if include_open_land:
+            try:
+                open_sites = find_open_land(game, min_width=6, min_height=6).get("candidates")
+            except Exception:  # noqa: BLE001 - open land is optional
+                open_sites = None
+        defined = {a.lower() for a in areas.load(_park_key())}
+        suggestions = [s for s in areas.suggest(_ride_index(), SESSION.map, open_sites=open_sites)
+                       if s["name"].lower() not in defined]
+        return _json({"suggestions": suggestions})
+
+
+@mcp.tool()
 def capture_game_view(bring_to_front: bool = True) -> Any:
     """Capture a screenshot of the OpenRCT2 window for visual inspection.
 
@@ -1840,11 +1898,12 @@ def get_map_bounds_tool() -> str:
 
 @mcp.tool()
 def get_map_region_tool(
-    x: int,
-    y: int,
-    width: int,
-    height: int,
+    x: int | None = None,
+    y: int | None = None,
+    width: int | None = None,
+    height: int | None = None,
     layers: str = "owned,slope,tile_z",
+    area: str | None = None,
 ) -> str:
     """Compact map grids for a rectangle (max 64x64), read from the cached map model.
 
@@ -1853,6 +1912,11 @@ def get_map_region_tool(
     scenery, water and unowned land is always included. Rows: lowest y first.
     """
     with game_context():
+        if area:
+            ax1, ay1, ax2, ay2 = _resolve_rect(area=area)
+            x, y, width, height = ax1, ay1, ax2 - ax1 + 1, ay2 - ay1 + 1
+        if None in (x, y, width, height):
+            raise ValueError("pass x, y, width, height or area")
         layer_list = [s.strip() for s in layers.split(",") if s.strip()]
         return _json(get_map_region(SESSION.map, x, y, width, height, layers=layer_list))
 
@@ -2112,10 +2176,10 @@ def _surface_base_z(game: RCT2, x: int, y: int) -> int:
 
 @mcp.tool()
 def landscape_tool(
-    x1: int,
-    y1: int,
-    x2: int,
-    y2: int,
+    x1: int | None = None,
+    y1: int | None = None,
+    x2: int | None = None,
+    y2: int | None = None,
     mode: str = "borders",
     palette: str = "rct2.scenery_small.tg1,rct2.scenery_small.tg4",
     tree: str = "rct2.scenery_small.torn1",
@@ -2124,8 +2188,9 @@ def landscape_tool(
     budget: int | None = None,
     dry_run: bool = True,
     preview: bool = False,
+    area: str | None = None,
 ) -> Any:
-    """Plan (and optionally place) orderly landscaping in a rectangle.
+    """Plan (and optionally place) orderly landscaping in a rectangle or named area.
 
     preview=true returns a map image with the plan drawn in magenta (implies dry_run).
 
@@ -2141,7 +2206,13 @@ def landscape_tool(
     objects = [p.strip() for p in palette.split(",") if p.strip()]
     with game_context() as game:
         ensure_paused(game)
+        x1, y1, x2, y2 = _resolve_rect(area, x1, y1, x2, y2)
         tiles = scan_area(game, x1, y1, x2, y2)
+        if area:
+            from openrct2_mcp.areas import area_tiles
+
+            inside = area_tiles(_park_key(), area)
+            tiles = {k: v for k, v in tiles.items() if k in inside}
         if mode == "borders":
             plan = path_border_plan(tiles, objects)
         elif mode == "terraces":
@@ -2598,15 +2669,16 @@ def find_open_land_tool(
 
 @mcp.tool()
 def terraform_region_tool(
-    x1: int,
-    y1: int,
-    x2: int,
-    y2: int,
+    x1: int | None = None,
+    y1: int | None = None,
+    x2: int | None = None,
+    y2: int | None = None,
     target_height: int | None = None,
     flatten: bool = True,
     dry_run: bool = False,
+    area: str | None = None,
 ) -> str:
-    """Flatten or set terrain height in a rectangle.
+    """Flatten or set terrain height in a rectangle (or a named area's bounding box).
 
     target_height is tile_z (baseZ // 8, same as path and coaster tools); one land
     step is 2. Terraforming is expensive (a small stepped hill cost $8,530), so run
@@ -2615,6 +2687,7 @@ def terraform_region_tool(
     """
     with game_context() as game:
         ensure_paused(game)
+        x1, y1, x2, y2 = _resolve_rect(area, x1, y1, x2, y2)
         run = lambda: terraform_region(  # noqa: E731
             game, x1, y1, x2, y2, target_height=target_height, flatten=flatten,
             dry_run=dry_run, ride_builder=SESSION.ride_builder,
@@ -2642,17 +2715,19 @@ def sell_land_tool(x1: int, y1: int, x2: int, y2: int) -> str:
 
 @mcp.tool()
 def clear_area_tool(
-    x1: int,
-    y1: int,
-    x2: int,
-    y2: int,
+    x1: int | None = None,
+    y1: int | None = None,
+    x2: int | None = None,
+    y2: int | None = None,
     remove_paths: bool = False,
     confirm_destructive: bool = False,
+    area: str | None = None,
 ) -> str:
-    """Clear scenery in a rectangle. Requires confirm_destructive=true."""
+    """Clear scenery in a rectangle or named area's bounding box. Requires confirm_destructive=true."""
     require_destructive_confirm(confirm_destructive, "clear_area")
     with game_context() as game:
         ensure_paused(game)
+        x1, y1, x2, y2 = _resolve_rect(area, x1, y1, x2, y2)
         result = _with_changes((x1, y1, x2, y2), lambda: clear_area(game, x1, y1, x2, y2, remove_paths=remove_paths))
         log_action("clear_area", {"region": [x1, y1, x2, y2]})
         return _json(result)

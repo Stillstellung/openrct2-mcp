@@ -77,7 +77,7 @@ def parse_colour(value: Any, default: RGB = COLOURS["overlay"]) -> RGB:
 # Distinct ride colours that avoid grass greens and flower pinks.
 RIDE_PALETTE: list[RGB] = [
     (230, 60, 40), (40, 110, 230), (245, 160, 20), (130, 70, 200), (20, 175, 180), (150, 95, 45),
-    (210, 200, 40), (90, 40, 140), (30, 60, 140), (200, 110, 60), (60, 140, 160), (170, 40, 70),
+    (150, 150, 225), (90, 40, 140), (30, 60, 140), (200, 110, 60), (60, 140, 160), (170, 40, 70),
 ]
 
 
@@ -313,6 +313,8 @@ def render_map(
             c = {"entrance": COLOURS["entrance"], "exit": COLOURS["exit"]}.get(e.kind, COLOURS["gate"])
             m = max(1, ppt // 5)
             cv.rect(px + m, py + m, ppt - 2 * m, ppt - 2 * m, c)
+            if ppt >= 6:  # white rim so doors stand out on any track colour
+                cv.outline(px + m - 1, py + m - 1, ppt - 2 * m + 2, ppt - 2 * m + 2, (255, 255, 255))
 
     # Grid every 5 tiles, labels every 5 or 10
     step = 5 if ppt * 5 >= text_width("000", label_scale) + 4 else 10
@@ -369,15 +371,32 @@ def render_map(
             if ppt >= 6:
                 cv.outline(px + 1, py + 1, ppt - 2, ppt - 2, NAMED["cyan"])
 
-    # Ride labels
-    for ride, ((lx, ly), name) in (ride_labels or {}).items():
+    # Ride labels: try a few spots near each ride's centre so labels never overlap;
+    # fall back to the ride id, and skip when even that does not fit.
+    placed: list[tuple[int, int, int, int]] = []
+    lh = 5 * label_scale + 3
+
+    def free(bx: int, by: int, bw: int) -> bool:
+        return all(bx + bw < ax or ax + aw < bx or by + lh < ay or ay + lh < by for ax, ay, aw, _ in placed)
+
+    for ride, ((lx, ly), name) in sorted((ride_labels or {}).items(), key=lambda kv: kv[1][0][1]):
         if not (x1 <= lx <= x2 and y1 <= ly <= y2):
             continue
-        px, py = origin(lx, ly)
-        label = name if ppt >= 8 else str(ride)
-        w = text_width(label, label_scale)
-        cv.rect(px - 1, py - 1, w + 2, 5 * label_scale + 3, (0, 0, 0), alpha=0.55)
-        cv.text(px, py, label, COLOURS["label"], label_scale, shadow=None)
+        cx, cy = origin(lx, ly)
+        for label in ([name] if ppt >= 8 else []) + [str(ride)]:
+            w = text_width(label, label_scale)
+            spot = next(
+                ((bx, by) for bx, by in ((cx - w // 2, cy), (cx - w // 2, cy + lh + 1), (cx - w // 2, cy - lh - 1),
+                                         (cx, cy), (cx - w, cy))
+                 if free(bx, by, w + 2)),
+                None,
+            )
+            if spot is not None:
+                bx, by = spot
+                cv.rect(bx - 1, by - 1, w + 2, lh, (0, 0, 0), alpha=0.55)
+                cv.text(bx, by, label, COLOURS["label"], label_scale, shadow=None)
+                placed.append((bx - 1, by - 1, w + 2, lh))
+                break
 
     # Legend: axes and key swatches
     ly = margin_t + th * ppt + 4
@@ -401,7 +420,7 @@ def render_map(
             "grass": "green, brighter = higher; dark lines = terrace steps; dark hatched = not owned",
             "track": "one colour per ride; white dashed = elevated, black dashed = underground",
             "paths": "grey, queues light blue; dashed outline = bridge or tunnel",
-            "doors": "orange = entrance, red = exit, yellow = park gate",
+            "doors": "white-rimmed squares: orange = entrance, red = exit, yellow = park gate",
             "scenery": "dark green dot = tree, pink = flowers, brown = walls/large scenery",
             "overlay": "magenta (or given colour) = planned work",
         },
