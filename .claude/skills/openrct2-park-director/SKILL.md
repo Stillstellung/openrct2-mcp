@@ -150,7 +150,7 @@ study or place with `coaster_fit_design_tool`. Corpus-derived rules:
 
 ### Crowded parks
 
-- `kind_rows` legend: `.` clear flat owned, `X` unowned (**never crossable**), `~`/`T`/`P`/`s` flyable when track base z > that tile's `top_z` (see `obstacle_tops`), `/` owned slope (supports OK)
+- `kind_rows` legend: `.` clear flat owned, `X` unowned (**never crossable**), `~`/`T`/`P`/`s` flyable when track base z > that tile's top z (`obstacle_tops.rise_rows`: per-tile height above ground in base 36, `^` = see `overflow`), `/` owned slope (supports OK)
 - Keep the **station + entrance/exit on clear ground** tiles; elevate the rest of the circuit over paths/water/rides
 - A turn template that closes: station x4, climb `[6, 4..., 9]`, turns `42` x4 with leg flats balanced (x: legA + 2*k_up + 9 = legC), descend `[12, 10..., 15]` into `EndStation`
 - If nothing fits, say so and offer: terraform owned slopes, demolish a specific ride (ask first), or load a roomier save
@@ -185,6 +185,25 @@ Use low-level survey tools only when auto-build fails or user asks for step-by-s
 ## Compact loops (manual fallback)
 
 `coaster_build_compact_loop_tool(creative=true, recipe="out_and_back")` — classic out-and-back or other recipes in 8×8–12×12. Set `creative=false` for endpoint-driven rectangle loop.
+
+## Running a coaster after it is built
+
+- **Verify guests can ride**: within a few in-game days `get_ride` should show customers.
+  0 customers with guests standing in the queue means the queue is not linked to the entrance
+- **Entrance facing**: a ride entrance/exit's stored direction points at the station tile
+  (0 = -x, 1 = +y, 2 = +x, 3 = -y); its opening is direction + 2. A backwards entrance
+  leaves the queue's end tile without an edge into it. The fit tool now re-points these
+- **Queues**: lay the queue starting at the entrance's front tile; if the end tile still
+  lacks the entrance edge, remove and re-place that one tile. Keep a 1-tile buffer between a
+  queue and a parallel path (queues join adjacent paths sideways)
+- **Entrance side**: put entrance and exit on the station side that faces open ground. A
+  lane between the station leg and the return leg needs a path tunnelled under high track
+- **More trains**: block-sectioned mode (34) allows stations + block sections - 1 trains, and
+  a chain lift top counts as one block. To add a train, swap the flat before the station for
+  Block Brakes with `replace_track_piece_tool(..., new_track_type=216, confirm_destructive=true)`,
+  then set trains and reopen. `set_num_trains_tool` reports the trains actually running
+- `openrct2_status` warns when the deployed ride-builder plugin differs from the repo copy;
+  a stale plugin silently runs old (buggy) code
 
 ## Non-coaster goals
 
