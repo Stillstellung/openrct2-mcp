@@ -327,6 +327,117 @@ def _park_key() -> str:
     return park_key(game.state.park_name(), game.state.scenario_filename())
 
 
+_CHECKPOINTS = None
+
+
+def _checkpoints():
+    global _CHECKPOINTS
+    if _CHECKPOINTS is None:
+        from openrct2_mcp.map_diff import CheckpointStore
+
+        _CHECKPOINTS = CheckpointStore()
+    return _CHECKPOINTS
+
+
+def _with_changes(rect: tuple[int, int, int, int], run) -> Any:
+    """Run a build step and attach a short summary of what changed in rect."""
+    from openrct2_mcp.map_diff import capture, compare
+
+    game = SESSION.game
+    before = capture(SESSION.map, rect, "auto", cash=game.state.park_cash())
+    result = run()
+    SESSION.mark_map_stale()
+    change = compare(SESSION.map, before, cash_now=game.state.park_cash(), max_tiles=0)
+    summary = {"tiles_changed": change["tiles_changed"], "counts": change["counts"], "spent": change.get("spent")}
+    if isinstance(result, dict):
+        result = dict(result)
+        result["changes"] = summary
+        return result
+    return {"result": result, "changes": summary}
+
+
+@mcp.tool()
+def map_checkpoint_tool(
+    name: str = "default",
+    x1: int | None = None,
+    y1: int | None = None,
+    x2: int | None = None,
+    y2: int | None = None,
+    area: str | None = None,
+) -> str:
+    """Freeze a rectangle of the map (default: the whole park) to diff against later.
+
+    Build, then call map_diff_tool(name) to see exactly what changed and what it
+    cost. Up to 10 named checkpoints are kept in memory for this server session.
+    """
+    from openrct2_mcp.map_diff import capture
+
+    with game_context() as game:
+        if area or None not in (x1, y1, x2, y2):
+            rect = _resolve_rect(area, x1, y1, x2, y2)
+        else:
+            rect = _park_extent()
+        cp = capture(SESSION.map, rect, name, cash=game.state.park_cash())
+        _checkpoints().put(cp)
+        return _json({"checkpoint": name, "rect": list(rect), "tiles": len(cp.tiles), "cash": cp.cash,
+                      "checkpoints": _checkpoints().names()})
+
+
+@mcp.tool()
+def map_diff_tool(name: str = "default", image: bool = False, max_tiles: int = 40) -> Any:
+    """What changed since map_checkpoint_tool(name): per-tile changes and money spent.
+
+    Change types: ground/slope/owned/water, path/queue added/removed/changed,
+    track added/removed (with ride), entrance/exit added/removed, scenery and wall
+    added/removed (with object index). image=true returns a map with every changed
+    tile outlined in cyan. ``spent`` is in money units ($1 = 10).
+    """
+    from openrct2_mcp.map_diff import compare
+
+    with game_context() as game:
+        cp = _checkpoints().get(name)
+        result = compare(SESSION.map, cp, cash_now=game.state.park_cash(), max_tiles=max_tiles)
+        changed = result.pop("changed_tiles")
+        _name_scenery_objects(result["tiles"])
+        if image:
+            meta, img = _map_image(cp.rect, highlight=changed)
+            result["map"] = meta
+            return _json(result), img
+        return _json(result)
+
+
+def _name_scenery_objects(tiles: list[dict]) -> None:
+    """Add the object identifier to scenery changes (display names are ambiguous)."""
+    kinds = {"small": "small_scenery", "large": "large_scenery", "wall": "wall", "banner": "banner"}
+    tables: dict[str, dict[int, str]] = {}
+    for tile in tiles:
+        for change in tile["changes"]:
+            kind = kinds.get(change.get("kind"))
+            if kind is None or "object" not in change:
+                continue
+            if kind not in tables:
+                try:
+                    rows = SESSION.ride_builder.call("listLoadedScenery", {"kind": kind}) or []
+                    tables[kind] = {int(r["index"]): r.get("identifier") for r in rows if "index" in r}
+                except Exception:  # noqa: BLE001 - names are a convenience
+                    tables[kind] = {}
+            ident = tables[kind].get(int(change["object"]))
+            if ident:
+                change["identifier"] = ident
+
+
+@mcp.tool()
+def get_recent_actions_tool(limit: int = 20) -> str:
+    """The last game actions executed (by the player, this server or plugins), newest last.
+
+    Each entry has the action name, its arguments (world units: tile * 32), the
+    player id (-1 = server/plugin) and the cost in money units. Useful to see what
+    the player just did in the game before planning around it.
+    """
+    with game_context():
+        return _json(SESSION.ride_builder.call("getRecentActions", {"limit": limit}))
+
+
 @mcp.tool()
 def capture_game_view(bring_to_front: bool = True) -> Any:
     """Capture a screenshot of the OpenRCT2 window for visual inspection.
@@ -697,12 +808,15 @@ def manage_paths(
         if action == "place_ramp" or (
             action in ("place_tile", "place_line") and (height is not None or slope is not None)
         ):
-            return _json(
-                _place_path_3d(
+            xs = [v for v in (from_x, to_x, tile_x) if v is not None]
+            ys = [v for v in (from_y, to_y, tile_y) if v is not None]
+            return _json(_with_changes(
+                (min(xs) - 1, min(ys) - 1, max(xs) + 1, max(ys) + 1),
+                lambda: _place_path_3d(
                     game, action, from_x, from_y, to_x, to_y, tile_x, tile_y,
                     height, end_height, slope, queue, surface_info, excavate,
-                )
-            )
+                ),
+            ))
         if action == "remove_tile":
             if tile_x is None or tile_y is None:
                 raise ValueError("remove_tile requires tile_x and tile_y")
@@ -2501,10 +2615,13 @@ def terraform_region_tool(
     """
     with game_context() as game:
         ensure_paused(game)
-        return _json(terraform_region(
+        run = lambda: terraform_region(  # noqa: E731
             game, x1, y1, x2, y2, target_height=target_height, flatten=flatten,
             dry_run=dry_run, ride_builder=SESSION.ride_builder,
-        ))
+        )
+        if dry_run:
+            return _json(run())
+        return _json(_with_changes((x1 - 1, y1 - 1, x2 + 1, y2 + 1), run))
 
 
 @mcp.tool()
@@ -2536,7 +2653,7 @@ def clear_area_tool(
     require_destructive_confirm(confirm_destructive, "clear_area")
     with game_context() as game:
         ensure_paused(game)
-        result = clear_area(game, x1, y1, x2, y2, remove_paths=remove_paths)
+        result = _with_changes((x1, y1, x2, y2), lambda: clear_area(game, x1, y1, x2, y2, remove_paths=remove_paths))
         log_action("clear_area", {"region": [x1, y1, x2, y2]})
         return _json(result)
 
