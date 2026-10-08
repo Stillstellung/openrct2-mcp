@@ -269,3 +269,31 @@ All of these were fixed after phase 2 (see the commit that follows this log):
   while hundreds of guests complained; aggregating thoughts over all guests (one
   `guests.list()` call, ~1s for 800 guests) was the useful signal. A `guest_thought_summary`
   tool should do exactly that.
+
+## Phase 5: new tools live (tower builder, auto-dig, pedestrian tunnel)
+
+- `build_tower_ride_tool` built a 20-section Observation Tower in one call (dry run first
+  with `confirm_cost=false` showed the plan). Excitement 4.03, the highest tower yet.
+- `coaster_fit_design_tool(excavate=true)` placed "Valley Dip" (Classic Mini RC) on hilly
+  bought land with no manual terraforming: it dug 15 tiles, ran out of its 12 retry rounds at
+  piece 26, and a second call dug the last 4 and placed all 30 pieces. Each round digs one
+  failing piece, so terrain-heavy layouts need many rounds. Better: pre-dig every
+  intersecting tile from the simulated footprint before the first probe.
+- Readable track errors work: "status 9: terrain or scenery in the way (track crosses the
+  land surface; lower the land or move the piece)".
+- **Pedestrian tunnel under a coaster**: the promenade now ramps down at x 83-85, runs at
+  tile_z 6 under Valley Dip's return track (track z10) and under its station (z12), and
+  ramps back up at x 93-95. Both tunnel mouths were dug automatically by `excavate`.
+  Guests use it: 70 riders reached the ride through it in two weeks.
+- Small gaps: `place_line` with `height` refuses a 1-tile line ("Line needs at least two
+  tiles"); a queue tile placed on a bowl's sloped edge took the slope's lower height and
+  missed the link, so set `height=` explicitly on slopes.
+- **Marketing works**: a 4-week PARK campaign took guests 826 -> 920 in a month (and 1,016
+  a month later). More guests brought the dirt back (rating 809 -> 712) until 5 more zoned
+  handymen (18 total for ~1,000 guests and ~350 path tiles) recovered it to 819.
+- **Rain**: 333 guests thought "not while raining"; added two Information Kiosks (umbrellas)
+  on the bypass and the promenade.
+- **Bad value by ride**: tallying `bad_value` thoughts by item pointed at three aging rides
+  (Spiral Slide 53, Haunted House 1 38, Ferris Wheel 26) with zero good-value thoughts;
+  cut their prices. Ride value decays with age, so old flat rides need cheaper tickets.
+- Park at Y3 June: 1,016 guests, rating 819, avg happiness 195, 31 rides/stalls.
