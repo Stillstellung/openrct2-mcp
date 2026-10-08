@@ -198,6 +198,135 @@ def focus_camera_tool(
     return _json({"camera": moved, "screenshot": meta}), image
 
 
+def _park_extent(margin: int = 2) -> tuple[int, int, int, int]:
+    """Bounding box of owned land (plus a margin), from the cached map."""
+    from openrct2_mcp.map_model import OWNED
+
+    model = SESSION.map
+    model.ensure_all()
+    xs, ys = [], []
+    for chunk in model.chunks.values():
+        for i, f in enumerate(chunk.flags):
+            if f & OWNED:
+                xs.append(chunk.min_x + i % chunk.width)
+                ys.append(chunk.min_y + i // chunk.width)
+    if not xs:
+        w, h = model.size or (128, 128)
+        return 0, 0, w - 1, h - 1
+    return min(xs) - margin, min(ys) - margin, max(xs) + margin, max(ys) + margin
+
+
+def _map_image(
+    rect: tuple[int, int, int, int] | None = None,
+    overlays: list | None = None,
+    *,
+    highlight: list[tuple[int, int]] | None = None,
+    label_rides: bool = True,
+    max_px: int = 1600,
+    margin: int = 4,
+    areas: list | None = None,
+) -> tuple[dict, Image]:
+    """Render the cached map (default: around the overlays, else the whole park)."""
+    from openrct2_mcp.map_render import render_map
+
+    overlays = overlays or []
+    if rect is None:
+        pts = [t for ov in overlays for t in ov.tiles] + list(highlight or [])
+        if pts:
+            rect = (min(p[0] for p in pts) - margin, min(p[1] for p in pts) - margin,
+                    max(p[0] for p in pts) + margin, max(p[1] for p in pts) + margin)
+        else:
+            rect = _park_extent()
+    labels = None
+    if label_rides:
+        labels = {
+            r.ride: (r.centre, r.name or str(r.ride))
+            for r in _ride_index().values() if r.centre and not r.is_stall
+        }
+    if areas is None:
+        areas = _area_marks()
+    png, meta = render_map(SESSION.map, *rect, overlays=overlays, ride_labels=labels, highlight=highlight or (),
+                           max_px=max_px, areas=areas)
+    return meta, Image(data=png, format="png")
+
+
+def _area_marks() -> list:
+    """Named areas to outline on map images (empty until areas are defined)."""
+    try:
+        from openrct2_mcp.areas import area_marks
+
+        return area_marks(_park_key())
+    except Exception:  # noqa: BLE001 - areas are optional decoration
+        return []
+
+
+@mcp.tool()
+def render_map_tool(
+    x1: int | None = None,
+    y1: int | None = None,
+    x2: int | None = None,
+    y2: int | None = None,
+    area: str | None = None,
+    overlay_json: str = "",
+    label_rides: bool = True,
+    highlight_ride: int | None = None,
+    max_px: int = 1600,
+) -> Any:
+    """Top-down map image (plan view) of the park or a rectangle, from the cached map.
+
+    +x runs right and +y runs down with tile numbers every 5 or 10 tiles, so
+    coordinates read straight off the image, whatever the game camera is doing.
+    Shows ground height shading and terrace steps, water, unowned land (dark,
+    hatched), paths and queues (with bridges and tunnels dashed), every ride's
+    footprint in its own colour with its name, entrances (orange), exits (red),
+    trees, flower beds, walls and named areas (yellow dashed).
+
+    Omit the rectangle for the whole park, or pass area="<name>" for a named area.
+    overlay_json draws planned work: a JSON list of {"tiles": [[x,y],...]},
+    {"line": [x1,y1,x2,y2]} or {"rect": [x1,y1,x2,y2]} items with optional
+    "colour" (name or #rrggbb), "label" and "style" ("fill"/"outline").
+    highlight_ride outlines one ride's footprint, doors and queue in cyan.
+    """
+    import json as _json_mod
+
+    from openrct2_mcp.map_render import overlays_from_json
+
+    with game_context():
+        rect = None
+        if area:
+            rect = _resolve_rect(area=area)
+        elif None not in (x1, y1, x2, y2):
+            rect = (x1, y1, x2, y2)
+        overlays = overlays_from_json(_json_mod.loads(overlay_json)) if overlay_json else []
+        highlight = None
+        if highlight_ride is not None:
+            loc = _ride_index().get(highlight_ride)
+            if loc is None:
+                raise ValueError(f"Ride {highlight_ride} is not on the map")
+            highlight = loc.tiles + [d.tile for d in loc.entrances + loc.exits] + [n[:2] for n in loc.queue]
+        meta, image = _map_image(rect, overlays, highlight=highlight, label_rides=label_rides, max_px=max_px,
+                                 margin=4 if rect is None else 0)
+        return _json(meta), image
+
+
+def _resolve_rect(area: str | None = None, x1=None, y1=None, x2=None, y2=None) -> tuple[int, int, int, int]:
+    """A rectangle from coordinates or a named area (its bounding box)."""
+    if area:
+        from openrct2_mcp.areas import resolve_area
+
+        return resolve_area(_park_key(), area)
+    if None in (x1, y1, x2, y2):
+        raise ValueError("pass x1, y1, x2, y2 or area")
+    return (x1, y1, x2, y2)
+
+
+def _park_key() -> str:
+    from openrct2_mcp.areas import park_key
+
+    game = SESSION.game
+    return park_key(game.state.park_name(), game.state.scenario_filename())
+
+
 @mcp.tool()
 def capture_game_view(bring_to_front: bool = True) -> Any:
     """Capture a screenshot of the OpenRCT2 window for visual inspection.
@@ -517,8 +646,12 @@ def manage_paths(
     end_height: int | None = None,
     slope: str | None = None,
     excavate: bool = True,
-) -> str:
+    preview: bool = False,
+) -> Any:
     """Place or remove paths. action: place_line | place_tile | place_ramp | place_addition | remove_tile | remove_line | list_surfaces.
+
+    preview=true (place_line, place_ramp, place_tile) builds nothing and returns a map
+    image with the planned tiles in cyan.
 
     place_line / place_tile also fill one-tile gaps beside the new tiles. Pass
     repair_gaps=false for exact shapes (hollow squares, lettering) where those
@@ -539,6 +672,23 @@ def manage_paths(
     remove_tile / remove_line remove paths at every height (bridges and tunnels
     too), or only at ``height`` when given.
     """
+    if preview:
+        from openrct2_mcp.map_render import overlay_from_line, overlay_from_tiles
+
+        if action in ("place_line", "place_ramp"):
+            if None in (from_x, from_y, to_x, to_y):
+                raise ValueError(f"{action} preview requires from_x, from_y, to_x, to_y")
+            ov = overlay_from_line(from_x, from_y, to_x, to_y, label=f"{action}{' queue' if queue else ''}")
+        elif action == "place_tile":
+            if tile_x is None or tile_y is None:
+                raise ValueError("place_tile preview requires tile_x and tile_y")
+            ov = overlay_from_tiles([(tile_x, tile_y)], label="path tile", colour="cyan")
+        else:
+            raise ValueError("preview supports place_line, place_ramp and place_tile")
+        with game_context():
+            meta, image = _map_image(None, [ov], margin=6)
+            return _json({"preview": True, "tiles": [list(t) for t in ov.tiles], "map": meta}), image
+
     with game_context() as game:
         if action == "list_surfaces":
             return _json(list_footpath_surfaces(game))
@@ -1783,8 +1933,12 @@ def build_maze_tool(
     seed: int | None = None,
     ride_object: str = "rct2.ride.hmaze",
     entrance_style: str = "Log Cabin",
-) -> str:
+    preview: bool = False,
+) -> Any:
     """Build a random hedge maze covering width x height tiles from (tile_x, tile_y).
+
+    preview=true builds nothing and returns a map image of the footprint (magenta)
+    with the entrance and exit tiles (cyan).
 
     The maze is a depth-first spanning tree over half-tile cells carved with the
     game's maze build mode, so every cell is reachable. Entrance/exit tiles must
@@ -1795,6 +1949,18 @@ def build_maze_tool(
 
     from openrct2_mcp.maze_builder import build_maze, entrance_openings
     from openrct2_mcp.ride_ops import station_style_index
+
+    if preview:
+        from openrct2_mcp.map_render import overlay_from_tiles
+
+        with game_context():
+            for ex, ey in ((entrance_x, entrance_y), (exit_x, exit_y)):
+                entrance_openings(tile_x, tile_y, width, height, ex, ey)  # raises if not beside the maze
+            ov = overlay_from_tiles(
+                [(x, y) for x in range(tile_x, tile_x + width) for y in range(tile_y, tile_y + height)], label="maze")
+            doors = overlay_from_tiles([(entrance_x, entrance_y), (exit_x, exit_y)], label=None, colour="cyan")
+            meta, image = _map_image(None, [ov, doors])
+            return _json({"preview": True, "map": meta}), image
 
     with game_context() as game:
         ensure_paused(game)
@@ -1843,8 +2009,11 @@ def landscape_tool(
     spacing: int = 3,
     budget: int | None = None,
     dry_run: bool = True,
-) -> str:
+    preview: bool = False,
+) -> Any:
     """Plan (and optionally place) orderly landscaping in a rectangle.
+
+    preview=true returns a map image with the plan drawn in magenta (implies dry_run).
 
     mode: "borders" (flower beds on empty grass touching ground-level paths, palette
     alternating in stripes), "terraces" (palette entries map to rising surface
@@ -1870,6 +2039,13 @@ def landscape_tool(
         else:
             raise ValueError("mode must be borders, terraces or lawns")
         summary = {"mode": mode, "scanned": len(tiles), "planned": len(plan)}
+        if preview:
+            from openrct2_mcp.map_render import overlay_from_tiles
+
+            ov = overlay_from_tiles(plan.keys(), label=f"{mode}: {len(plan)} objects")
+            meta, image = _map_image((x1, y1, x2, y2), [ov])
+            summary["map"] = meta
+            return _json(summary), image
         if dry_run:
             summary["sample"] = [[x, y, o] for (x, y), o in sorted(plan.items())[:20]]
             return _json(summary)
@@ -2584,8 +2760,12 @@ def coaster_generate_freeform_tool(
     seed: int | None = None,
     station_z: int | None = None,
     allow_tunnels: bool = True,
-) -> str:
+    preview: bool = False,
+) -> Any:
     """Generate a wandering (non-hairpin) coaster layout inside an owned rectangle.
+
+    preview=true also returns a map image with the layout's footprint in magenta
+    over the park, to check what it crosses before placing it.
 
     Random modules (sloped turns, drops, hops, helixes, banked turns, and loops or
     corkscrews on looping ride types) wander from a chain lift, cross over the
@@ -2623,6 +2803,14 @@ def coaster_generate_freeform_tool(
             })
         result["ok"] = True
         result["height_map"] = render_ascii(result["design"])
+        if preview:
+            from openrct2_mcp.map_render import overlay_from_design, overlay_from_tiles
+
+            ov = overlay_from_design(result["design"], label="generated layout")
+            station = overlay_from_tiles([(station_x, station_y)], colour="cyan")
+            meta, image = _map_image((x1, y1, x2, y2), [ov, station])
+            result["map"] = meta
+            return _json(result), image
         return _json(result)
 
 

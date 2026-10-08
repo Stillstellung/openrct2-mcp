@@ -6,13 +6,12 @@ bitmap, so the capture works even when the game is covered by other windows.
 
 from __future__ import annotations
 
-import struct
 import time
-import zlib
 from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 
+from openrct2_mcp.png import encode_png_rgb  # noqa: F401 - re-exported for callers
 from openrct2_mcp.vision import VisionCaptureError
 
 _GAME_EXE_NAMES = ("openrct2.exe", "openrct2.com")
@@ -28,25 +27,6 @@ _DIB_RGB_COLORS = 0
 _BI_RGB = 0
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
-
-
-def encode_png_rgb(width: int, height: int, rgb: bytes) -> bytes:
-    """Encode 8-bit RGB pixels (row-major, top-down) as a PNG."""
-    stride = width * 3
-    if len(rgb) != stride * height:
-        raise ValueError(f"expected {stride * height} bytes of RGB data, got {len(rgb)}")
-    raw = b"".join(b"\x00" + rgb[y * stride : (y + 1) * stride] for y in range(height))
-
-    def chunk(kind: bytes, data: bytes) -> bytes:
-        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
-
-    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", header)
-        + chunk(b"IDAT", zlib.compress(raw, 6))
-        + chunk(b"IEND", b"")
-    )
 
 
 def bgra_to_rgb(bgra: bytes) -> bytes:
