@@ -132,6 +132,8 @@ function main() {
         ["getMapSnapshot",       params => handleGetMapSnapshot(params)],
         ["getMapChanges",        params => handleGetMapChanges(params)],
         ["getRecentActions",     params => handleGetRecentActions(params)],
+        ["loadObject",           params => handleLoadObject(params)],
+        ["findInstalledObjects", params => handleFindInstalledObjects(params)],
         ["listRideMaintenance",  () => handleListRideMaintenance()],
         ["getGameSpeed",         () => handleGetGameSpeed()],
         ["getElementsInRect",    params => handleGetElementsInRect(params)],
@@ -640,6 +642,32 @@ function main() {
     async function handleGetRecentActions(params) {
         const limit = params && typeof params.limit === "number" ? params.limit : 20;
         return recentActions.slice(-limit);
+    }
+
+    // Load an installed object (ride, stall, scenery...) into the running park, e.g.
+    // a cash machine the scenario did not include. Returns its type and index.
+    async function handleLoadObject(params) {
+        const identifier = params && params.identifier;
+        if (typeof identifier !== "string" || !identifier) throw new Error("Missing or invalid parameter: identifier");
+        if (typeof objectManager === "undefined" || typeof objectManager.load !== "function") {
+            throw new Error("objectManager.load is not available in this OpenRCT2 build");
+        }
+        const obj = objectManager.load(identifier);
+        if (!obj) throw new Error("Could not load " + identifier + " (not installed, or no free slot)");
+        return { identifier: obj.identifier, type: obj.type, index: obj.index, name: obj.name };
+    }
+
+    // Search installed (not necessarily loaded) objects by identifier or name.
+    async function handleFindInstalledObjects(params) {
+        const query = String((params && params.query) || "").toLowerCase();
+        const type = params && params.type;
+        const limit = (params && params.limit) || 30;
+        if (typeof objectManager === "undefined") throw new Error("objectManager is not available");
+        return objectManager.installedObjects
+            .filter(o => (!type || o.type === type)
+                && (!query || o.identifier.toLowerCase().indexOf(query) >= 0 || String(o.name).toLowerCase().indexOf(query) >= 0))
+            .slice(0, limit)
+            .map(o => ({ identifier: o.identifier, type: o.type, name: o.name }));
     }
 
     // Trains only exist while a ride is open or testing; a closed ride reports 0.

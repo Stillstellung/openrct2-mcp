@@ -428,6 +428,31 @@ def _name_scenery_objects(tiles: list[dict]) -> None:
 
 
 @mcp.tool()
+def find_installed_objects_tool(query: str = "", object_type: str | None = "ride", limit: int = 30) -> str:
+    """Search objects installed with OpenRCT2 (not just the ones this park loaded).
+
+    object_type: ride (rides and stalls), small_scenery, large_scenery, wall,
+    footpath_surface, ... or None for all. Use load_object_tool to add one to the park.
+    """
+    with game_context():
+        return _json(SESSION.ride_builder.call("findInstalledObjects", {"query": query, "type": object_type, "limit": limit}))
+
+
+@mcp.tool()
+def load_object_tool(identifier: str) -> str:
+    """Load an installed object into the running park (e.g. "rct2.ride.atm1" for an ATM).
+
+    Scenarios ship with a fixed object list; this adds one more so it can be built
+    straight away with place_stall / place_flat_ride / scenery tools. It uses a free
+    object slot and stays in the save.
+    """
+    with game_context():
+        result = SESSION.ride_builder.call("loadObject", {"identifier": identifier})
+        log_action("load_object", {"identifier": identifier})
+        return _json(result)
+
+
+@mcp.tool()
 def get_recent_actions_tool(limit: int = 20) -> str:
     """The last game actions executed (by the player, this server or plugins), newest last.
 

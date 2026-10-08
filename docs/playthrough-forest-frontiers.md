@@ -452,3 +452,26 @@ Bugs found on the way:
 Still open: the ride-builder's own full-map scan in `findStationPieces` (only
 used when a ride has no stations) still loops in the plugin; and manual edits in
 the game UI are tracked through the same hook but were not tested by hand.
+
+## Phase 9: crowding, cash, toilets
+
+Guest thoughts at Y4 January (1,430 guests): crowded 59%, not thirsty 30% (guests
+declining drinks, i.e. thirst was fine: average 186/255), vandalism 9%, running
+out of cash 7.5%, wants a toilet / drink / umbrella / map about 4% each.
+
+- **Where the crowds were:** guest positions per tile (ride-builder
+  `getGuestsInRect`) drawn over `render_map_tool`. The single gate-to-south spine
+  at x=51 (ride doors on both sides, so it can't be widened) and the y=55-57
+  corridor west to Serpent of the Pines held 9-12 guests per tile.
+- **Paths (51 tiles, 32 flower beds removed):** a loop from the gate path down x=56
+  to the wide y=28 avenue; a western bypass along y=28 and x=46 to y=41; a second
+  lane on the y=55 west corridor and on the y=65 south path.
+- **ATMs:** the scenario has no cash machine, so `objectManager.load("rct2.ride.atm1")`
+  added one to the running park (new `load_object_tool` / `find_installed_objects_tool`).
+  Three ATMs had 89 withdrawals in the first days.
+- **West services:** restroom, info kiosk (umbrellas, maps) and drinks stall beside
+  the x=39 path near Lil' Ladybug, which had none. 2 more security guards (east
+  maze gardens, gate spine), benches and bins on the new paths.
+- **After a few days:** crowded 59% -> 45%, running out of cash 7.5% -> 2%, vandalism
+  8.6% -> 7.4%, unhappy guests 18 -> 9, average happiness 196 -> 202, **park rating
+  976 -> 999**. The rain also stopped in that window, which helps happiness on its own.
