@@ -91,10 +91,13 @@ General lessons from a full playthrough (details in `docs/playthrough-forest-fro
 - **Charge park entry when `unlockAllPrices` is on** (`park.flags`): $15 entry plus the free-entry and
   half-price campaigns ($50/week each) roughly doubled arrivals and paid for everything (cash $5k ->
   $50k). Guests are not deterred while the fee stays below `park.totalRideValueForMoney`
-- **Price rule for guests who paid entry**: they refuse a ride (`bad_value`) when price >
-  (`ride.value` // 4) x 2. Ride value halves as the ride ages and drops 25% when another ride of the
-  same type is open, so prices that were fine go bad months later. A single month of stale prices
-  (plus rain) cut rating 999 -> 816 and happiness 178 -> 118. Reprice every game week, not monthly
+- **Price rule**: a guest refuses a ride priced above 2 x `ride.value` (value // 4 first if they
+  paid entry), thinks `bad_value` and loses 16 happiness target. Value includes +30 for a ride's
+  first 5 months and +10 until month 13, and drops 25% while another ride of the same type is open, so
+  cheap flat rides lose most of their value at those birthdays. A single month of stale prices (plus
+  rain) cut rating 999 -> 816 and happiness 178 -> 118. `optimize_park_pricing_tool` applies the rule
+  (`guest_feedback=false` for the fast value-only pass); keep it applied every game week with
+  `park_watch.py watch --reprice` (below)
 - **Half of guests want intensity >= 4** (they think `more_thrilling` at gentle rides). Top Spin (4.8),
   Launched Freefall and the Swinging Inverter Ship serve them cheaply; gentle rides serve the rest
 - `refurbish_ride_tool` resets age, so value and the price guests accept recover: Top Spins
@@ -102,12 +105,15 @@ General lessons from a full playthrough (details in `docs/playthrough-forest-fro
 
 **Fast-forwarding a long run**
 - `advance_time(16384)` is one game month and took about 55 s wall clock; 24 months is about 20 minutes
-- Run a read-only background poller while the clock moves (park stats and
-  `guest_thought_summary` every 10 s into a log file), then read a compact summary after each
-  month. It costs no model tokens and catches mid-month dips. A second client on the bridge port works
-  alongside the MCP server, but **connect with a raw `pyrct2.connection.Connection`, not
-  `SESSION.game`**: SESSION pauses the game on connect, which strands a running `advance_time`
-  (the next one then fails with `already_in_progress` until the game is unpaused)
+- Run the poller in the background while the clock moves:
+  `.venv\Scripts\python.exe scripts\park_watch.py watch --reprice` (Bash `run_in_background`). It logs
+  park stats and the guest thought summary every 15 s (about 4 game days at fastest speed) and keeps
+  ride prices under the value rule. After each month run `park_watch.py summary` for ranges, peak
+  problem thoughts and per-ride complaints since the last summary; `park_watch.py status` is one line.
+  Stop it by deleting the `.stop` file it names. It costs no model tokens and catches mid-month dips
+- Scripts must connect with `open_bridge()` (what `park_watch.py` uses), **not `SESSION.game`**:
+  SESSION pauses the game on connect, which strands a running `advance_time` (the next one then
+  fails with `already_in_progress` until the game is unpaused)
 - Delegate read-only analysis (crowd-relief path plans) to a subagent while the clock runs; tell it
   explicitly not to build or advance time. Avoid `list_rides` and `park_health_report_tool` for
   routine checks (huge output); use `get_ride`, `list_refurbish_candidates_tool` or a small script

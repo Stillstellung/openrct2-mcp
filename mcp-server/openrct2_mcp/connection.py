@@ -53,6 +53,38 @@ def _port_accepts(host: str, port: int, timeout: float = PROBE_TIMEOUT) -> bool:
         return False
 
 
+def open_bridge(start_port: int = DEFAULT_BRIDGE_PORT, timeout: float = BRIDGE_TIMEOUT) -> RCT2:
+    """Connect to the openrct2-bridge plugin on the first port from ``start_port`` that answers.
+
+    The game keeps running. SESSION.game pauses it on connect, which strands an
+    advance_time running in another client, so background pollers use this instead.
+    """
+    last_error: Exception | None = None
+    for candidate in range(start_port, start_port + PORT_SCAN_RANGE):
+        if not _port_accepts(DEFAULT_HOST, candidate):
+            continue
+        connection: BridgeConnection | None = None
+        try:
+            connection = BridgeConnection(host=DEFAULT_HOST, port=candidate, timeout=timeout)
+            health = connection.send("health")
+            payload = health.get("payload")
+            # ride-builder also answers "health" successfully; skip it.
+            is_ride_builder = isinstance(payload, dict) and payload.get("plugin") == "ride-builder"
+            if not health.get("success") or is_ride_builder:
+                connection.close()
+                continue
+            return RCT2(connection)
+        except OSError as exc:
+            if connection is not None:
+                connection.close()
+            last_error = exc
+    raise ConnectionError(
+        "openrct2-bridge plugin is not reachable. "
+        f"Expected port {start_port}+ on {DEFAULT_HOST}. "
+        f"Launch OpenRCT2 and load a park. {SETUP_HINT}"
+    ) from last_error
+
+
 def _socket_is_closed(sock: socket.socket | None) -> bool:
     """True when the peer has closed or reset the connection (e.g. the game exited)."""
     if sock is None:
@@ -238,39 +270,12 @@ class GameSession:
         connection.send = send_and_mark
 
     def _connect_bridge(self) -> RCT2:
-        last_error: Exception | None = None
-        for candidate in range(self._bridge_port, self._bridge_port + PORT_SCAN_RANGE):
-            if not _port_accepts(DEFAULT_HOST, candidate):
-                continue
-            connection: BridgeConnection | None = None
-            try:
-                connection = BridgeConnection(
-                    host=DEFAULT_HOST,
-                    port=candidate,
-                    timeout=BRIDGE_TIMEOUT,
-                )
-                health = connection.send("health")
-                payload = health.get("payload")
-                # ride-builder also answers "health" successfully; skip it.
-                is_ride_builder = isinstance(payload, dict) and payload.get("plugin") == "ride-builder"
-                if not health.get("success") or is_ride_builder:
-                    connection.close()
-                    continue
-                game = RCT2(connection)
-                self._watch_bridge_writes(game)
-                self._bridge_port = candidate
-                game.pause()
-                game.park.cheats.build_in_pause_mode()
-                return game
-            except OSError as exc:
-                if connection is not None:
-                    connection.close()
-                last_error = exc
-        raise ConnectionError(
-            "openrct2-bridge plugin is not reachable. "
-            f"Expected port {self._bridge_port}+ on {DEFAULT_HOST}. "
-            f"Launch OpenRCT2 and load a park. {SETUP_HINT}"
-        ) from last_error
+        game = open_bridge(self._bridge_port)
+        self._watch_bridge_writes(game)
+        self._bridge_port = game._connection.port
+        game.pause()
+        game.park.cheats.build_in_pause_mode()
+        return game
 
     def _bridge_socket(self) -> socket.socket | None:
         return getattr(getattr(self._game, "_connection", None), "_socket", None)

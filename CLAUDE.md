@@ -20,6 +20,7 @@ Python MCP server (`mcp-server/openrct2_mcp`) that drives a **running** OpenRCT2
 - Setup, macOS: `./scripts/install-bridge.sh`
 - Tests (offline, no game needed): `.venv\Scripts\python.exe -m pytest mcp-server/tests -q` (macOS: `.venv/bin/python -m pytest ...`)
 - Live plugin check (game running with a park loaded): `.venv\Scripts\python.exe scripts\check_connection.py`
+- Background park poller during long runs: `.venv\Scripts\python.exe scripts\park_watch.py watch --reprice`, then `park_watch.py summary` (doesn't pause the game)
 - After editing `ride-builder.js`: `.venv\Scripts\python.exe -m openrct2_mcp.install` (game closed, it edits `config.ini`)
 - After editing server Python code: reconnect the server with `/mcp`.
 

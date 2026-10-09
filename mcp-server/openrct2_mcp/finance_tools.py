@@ -16,6 +16,12 @@ from openrct2_mcp.connection import RideBuilderClient
 MIN_TICKET_PRICE = 1
 MAX_RIDE_PRICE = 30
 MAX_STALL_PRICE = 50
+RIDE_VALUE_UNDEFINED = 0xFFFF
+# Price rides at this share of the most guests will pay: ride value drops at age
+# 5 and 13 months and when a ride of the same type opens, so leave headroom.
+VALUE_PRICE_FRACTION = 0.7
+# Only raise a price toward the value target when it is this far below it.
+VALUE_PRICE_SLACK = 3
 
 
 def get_finance_summary(game: RCT2) -> dict[str, Any]:
@@ -55,6 +61,44 @@ def scenario_progress(game: RCT2) -> dict[str, Any]:
         "awards": awards,
         "park_rating": game.state.park_rating(),
     }
+
+
+def ride_price_limit(value: Any, *, paid_entry: bool) -> int | None:
+    """Highest ticket price (tenths of currency) guests pay for a ride with this value.
+
+    OpenRCT2 Guest::ShouldGoOnRide: a guest refuses a ride priced above twice its
+    value, thinks "bad value" and loses 16 happiness target. A guest who paid park
+    entry first divides the value by 4 (integer division). None when the ride has
+    no value yet (unrated), which guests treat as no limit.
+    """
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0 or value >= RIDE_VALUE_UNDEFINED:
+        return None
+    if paid_entry:
+        value //= 4
+    return value * 2
+
+
+def value_price_change(
+    current: int | None,
+    limit: int | None,
+    *,
+    paid_entry: bool,
+    fraction: float = VALUE_PRICE_FRACTION,
+) -> tuple[int, str] | None:
+    """New (price, reason) from the ride-value rule, or None to leave the price alone.
+
+    Prices above ``limit`` drop to ``fraction`` of it. When the park charges entry,
+    prices well below that target (including rides never priced) rise to it.
+    """
+    if limit is None or current is None:
+        return None
+    target = int(limit * fraction)
+    if current > limit:
+        who = "guests who paid entry" if paid_entry else "guests"
+        return target, f"above the {limit} {who} pay at this ride's value"
+    if paid_entry and target > current and (current == 0 or current < target - VALUE_PRICE_SLACK):
+        return target, f"well below the {limit} guests who paid entry pay"
+    return None
 
 
 def _sample_guest_value_feedback(game: RCT2, max_guest_id: int = 500) -> tuple[Counter[int], Counter[int]]:
@@ -205,12 +249,24 @@ def optimize_park_pricing_from_guest_feedback(
     *,
     dry_run: bool = False,
     guest_sample_size: int = 500,
+    guest_feedback: bool = True,
 ) -> dict[str, Any]:
-    """Adjust ticket prices using satisfaction, guest thoughts, and park messages."""
+    """Adjust ticket prices from each ride's value, then guest feedback.
+
+    The value rule (``ride_price_limit``) runs first on every ride: prices above
+    what guests pay drop, and when the park charges entry, underpriced rides rise.
+    With ``guest_feedback`` the remaining rides are tuned from satisfaction,
+    sampled guest thoughts and park messages, never above the value limit.
+    ``guest_feedback=False`` skips the slow guest sampling (for a background loop).
+    """
     rides = list_rides_fast(game, ride_builder)
     rides_by_name = {r["name"].lower(): r for r in rides}
-    bad_value, good_value = _sample_guest_value_feedback(game, max_guest_id=guest_sample_size)
-    complaint_rides = _price_complaint_ride_ids(game, rides_by_name)
+    paid_entry = game.state.park_entrance_fee() > 0
+    if guest_feedback:
+        bad_value, good_value = _sample_guest_value_feedback(game, max_guest_id=guest_sample_size)
+        complaint_rides = _price_complaint_ride_ids(game, rides_by_name)
+    else:
+        bad_value, good_value, complaint_rides = Counter(), Counter(), set()
 
     changes: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -218,6 +274,28 @@ def optimize_park_pricing_from_guest_feedback(
     for ride in rides:
         raw = get_ride_raw(game, ride["id"])
         current = primary_ride_price(raw.get("price") if raw else ride.get("price"))
+        classification = (ride.get("classification") or "").lower()
+        limit = None
+        if classification not in ("stall", "facility"):
+            limit = ride_price_limit(raw.get("value") if raw else None, paid_entry=paid_entry)
+        value_change = value_price_change(current, limit, paid_entry=paid_entry)
+        if value_change is not None:
+            changes.append(
+                {
+                    "ride_id": ride["id"],
+                    "name": ride["name"],
+                    "classification": ride.get("classification"),
+                    "old_price": current,
+                    "new_price": value_change[0],
+                    "value": raw.get("value") if raw else None,
+                    "price_limit": limit,
+                    "reason": value_change[1],
+                }
+            )
+            continue
+        if not guest_feedback:
+            continue
+
         skip_reason = _should_skip_ride(ride, current)
         if skip_reason:
             skipped.append({"ride_id": ride["id"], "name": ride["name"], "reason": skip_reason})
@@ -238,6 +316,8 @@ def optimize_park_pricing_from_guest_feedback(
             good_value=good_value.get(ride["id"], 0),
             price_complaint=ride["id"] in complaint_rides,
         )
+        if limit is not None and new_price > limit:
+            new_price, reason = current, "hold (at the value limit)"
 
         entry = {
             "ride_id": ride["id"],
@@ -259,7 +339,8 @@ def optimize_park_pricing_from_guest_feedback(
     if dry_run:
         return {
             "dry_run": True,
-            "guests_sampled": guest_sample_size,
+            "paid_entry": paid_entry,
+            "guests_sampled": guest_sample_size if guest_feedback else 0,
             "price_complaint_rides": sorted(complaint_rides),
             "changes": changes,
             "skipped": skipped,
@@ -276,7 +357,8 @@ def optimize_park_pricing_from_guest_feedback(
 
     return {
         "dry_run": False,
-        "guests_sampled": guest_sample_size,
+        "paid_entry": paid_entry,
+        "guests_sampled": guest_sample_size if guest_feedback else 0,
         "price_complaint_rides": sorted(complaint_rides),
         "changed_count": len(applied),
         "applied": applied,

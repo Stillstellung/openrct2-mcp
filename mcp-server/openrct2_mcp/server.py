@@ -2965,12 +2965,24 @@ def scenario_progress_tool() -> str:
 
 
 @mcp.tool()
-def optimize_park_pricing_tool(dry_run: bool = False) -> str:
-    """Adjust ride and stall prices from guest satisfaction and value thoughts."""
+def optimize_park_pricing_tool(dry_run: bool = False, guest_feedback: bool = True) -> str:
+    """Set ride prices from each ride's value, then tune rides and stalls from guest feedback.
+
+    Guests refuse a ride (and think "bad value", losing happiness) above twice its
+    value, or half its value if they paid park entry. Value falls at ride age 5 and
+    13 months and while another ride of the same type is open, so run this every
+    game week or two. Prices above the limit drop to 70% of it; when the park
+    charges entry, rides well below that (including unpriced new rides) rise to it.
+    guest_feedback=false skips the slow guest sampling and applies only that rule.
+    """
     with game_context() as game:
         if not dry_run:
             ensure_paused(game)
-        return _json(optimize_park_pricing_from_guest_feedback(game, SESSION.ride_builder, dry_run=dry_run))
+        return _json(
+            optimize_park_pricing_from_guest_feedback(
+                game, SESSION.ride_builder, dry_run=dry_run, guest_feedback=guest_feedback
+            )
+        )
 
 
 @mcp.tool()
