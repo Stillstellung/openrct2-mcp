@@ -1028,7 +1028,7 @@ def manage_staff(
         if action == "list":
             return _json(list_staff(game))
         if action == "hire":
-            return _json(hire_staff_member(game, staff_type, orders=staff_orders))
+            return _json(hire_staff_member(game, staff_type, orders=staff_orders, ride_builder=SESSION.ride_builder))
         if action == "set_patrol":
             if staff_id is None:
                 staff_list = game.park.staff.list()

@@ -44,6 +44,50 @@ General lessons from a full playthrough (details in `docs/playthrough-forest-fro
 | `not_while_raining` | rain | info kiosks sell umbrellas; it passes |
 | `more_thrilling` | wants intensity | a new intense coaster (see Freeform) |
 
+**Guest-count objectives** ("N guests by year Y", won on Dynamite Dunes from a one-coaster start)
+- Years have **8 months** (March to October), so "year 3" is only 24 months. The game checks the
+  objective once, when 24 months have elapsed (`scenarioTicks` = 24 x 16384), not when the count is first
+  reached. Needs the guest count and rating >= 600 at that moment; `scenario_progress_tool` then says
+  `completed`
+- **The binding limit is `park.suggestedGuestMaximum`**, not marketing. Over it, arrivals drop to a
+  quarter. Read it with `bridge_payload(game, "park.suggestedGuestMaximum")` (and
+  `park.guestGenerationProbability`; it is recomputed weekly). Each open ride added about 35 to the
+  cap, each stall about 15. It went 85 -> 819 with 17 rides and 7 stalls; a 650 goal needed about 12
+  rides. Cheap flat rides ($50-$200) are the best cap per dollar
+- **Any loaded ride can be built regardless of research**, including "uninvented" ones (Ferris wheel,
+  bumper cars, Top Spin were placed with research funding NONE). Set research to NONE and spend the
+  money on rides. `place_ride_at_best_tile_tool` needs a 5x5 open site (6x6 for stalls, so use
+  `place_stall`); once land is used up place rides with `place_flat_ride` (tile = centre of the 3x3
+  footprint, doors on the column beside it facing a path) and check `list_ride_locations_tool(only_issues=true)`
+- One 4-week `PARK` campaign early took guests from 130 to 230 in two weeks. After that natural
+  arrivals (about 43 a week at rating 900+) kept growing the park; the cap, not arrivals, stopped it
+- Equilibrium was about 860-960 guests on 220 path tiles. At that density "crowded" reached 60-85%
+  of guests and happiness slid 224 -> 175, but rating stayed above 880. Crowding is not an objective
+  risk; breakdowns are (below)
+- **Rides wear out**: reliability fell to 52-70% after 10-20 months and nearly every ride broke down
+  repeatedly. Hire mechanics (8 for 32 rides), then renew with `refurbish_ride_tool`. Do it in
+  **batches**: `close_ride` 5-6 rides, `advance_time(4096)` once so guests clear, then
+  `refurbish_ride_tool(id, close_first=false, wait_for_empty=false, open_after=true)` on each. The
+  default one-ride-at-a-time mode burns half a month of game time per ride. Flat rides cost about
+  $120-$200 each, a big coaster about $4,200. Doing all ~16 at once dipped rating to 794 and
+  unhappy guests to 180 for about a month, so do 6 at a time
+- `ENTERTAINER` hires need a loaded costume object (`rct2.peep_animations.entertainer_panda`); the
+  hire tool now loads one itself
+- Prices: guests judged a $1 merry-go-round (excitement ~1) as `bad_value`; $0.50 cleared it. The
+  coaster at $4 stayed `good_value` and earned most of the income
+- Handymen: 11 for ~220 path tiles and 900 guests kept `path_disgusting` away; give each a patrol
+  box (`set_staff_patrol_tool`) over a different stretch
+
+**Fast-forwarding a long run**
+- `advance_time(16384)` is one game month and took about 55 s wall clock; 24 months is about 20 minutes
+- Run a read-only background poller while the clock moves (park stats and
+  `guest_thought_summary` every 10 s into a log file), then read a compact summary after each
+  month. It costs no model tokens and catches mid-month dips. A second client on the bridge port works
+  alongside the MCP server
+- Delegate read-only analysis (crowd-relief path plans) to a subagent while the clock runs; tell it
+  explicitly not to build or advance time. Avoid `list_rides` and `park_health_report_tool` for
+  routine checks (huge output); use `get_ride`, `list_refurbish_candidates_tool` or a small script
+
 **Other levers**
 - Research greys out a category when nothing is left to research in it. `load_object_tool` adds
   any installed object (ATMs, other rides) regardless of research

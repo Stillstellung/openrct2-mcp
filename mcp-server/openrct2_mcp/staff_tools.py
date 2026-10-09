@@ -59,13 +59,39 @@ def list_staff(game: RCT2) -> list[dict]:
 # Mechanic: 1 inspect rides, 2 fix rides. Orders 0 hires staff who do nothing.
 DEFAULT_STAFF_ORDERS = {"HANDYMAN": 7, "MECHANIC": 3}
 
+# Entertainers need a loaded costume object; hiring takes its object index, not an enum.
+ENTERTAINER_COSTUMES = tuple(
+    f"rct2.peep_animations.entertainer_{name}"
+    for name in ("panda", "tiger", "elephant", "gorilla", "roman", "knight", "pirate", "sheriff", "bandit")
+)
 
-def hire_staff_member(game: RCT2, staff_type: str, orders: int = 0) -> dict:
+
+def entertainer_costume_index(game: RCT2, ride_builder: Any = None) -> int:
+    """Object index of a loaded entertainer costume, loading the first installed one if none is."""
+    for ident in ENTERTAINER_COSTUMES:
+        try:
+            return int(game._query("get_object", {"type": "peep_animations", "identifier": ident})["index"])
+        except Exception:  # noqa: BLE001 - not loaded: try the next costume
+            continue
+    if ride_builder is not None:
+        for ident in ENTERTAINER_COSTUMES:
+            try:
+                return int(ride_builder.call("loadObject", {"identifier": ident})["index"])
+            except Exception:  # noqa: BLE001 - not installed: try the next costume
+                continue
+    raise ValueError("no entertainer costume is loaded or installable (load_object_tool rct2.peep_animations.entertainer_panda)")
+
+
+def hire_staff_member(game: RCT2, staff_type: str, orders: int = 0, ride_builder: Any = None) -> dict:
     """Hire staff; orders 0 means the in-game defaults (an idle hire is never wanted)."""
     kind = staff_type.upper()
     if not orders:
         orders = DEFAULT_STAFF_ORDERS.get(kind, 0)
-    member = game.park.staff.hire(StaffType[kind], staff_orders=orders)
+    if kind == "ENTERTAINER":
+        costume = entertainer_costume_index(game, ride_builder)
+        member = game.park.staff.hire(StaffType[kind], costume_index=costume, staff_orders=orders)
+    else:
+        member = game.park.staff.hire(StaffType[kind], staff_orders=orders)
     return {"staff_id": member._id, "type": staff_type, "name": member.data.name, "orders": orders}
 
 
