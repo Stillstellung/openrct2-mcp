@@ -60,8 +60,12 @@ def _footpath_addition_ident_map(game: RCT2) -> dict[int, str]:
     return _FOOTPATH_ADDITION_IDENT_MAP
 
 
-def _classify_addition_kind(ident: str, addition_idx: int | None) -> str | None:
+def _classify_addition_kind(ident: str, addition_idx: int | None, edges: int | None = None) -> str | None:
     if addition_idx is None:
+        # OpenRCT2 refuses bins, benches and lamps on a tile joined on all four
+        # sides ("Can only be placed on path edges!").
+        if edges is not None and (int(edges) & 0xF) == 0xF:
+            return "no_room"
         return None
     if "litter" in ident:
         return "bin"
@@ -471,7 +475,7 @@ def _rows_from_tile_elements(
                 tile_x,
                 tile_y,
                 int(getattr(elem, "baseZ", 0) or 0),
-                _classify_addition_kind(ident, addition_idx),
+                _classify_addition_kind(ident, addition_idx, getattr(elem, "edges", None)),
                 bool(getattr(elem, "isQueue", False)),
                 _footpath_is_sloped(elem),
             )
@@ -490,7 +494,7 @@ def _scan_footpaths_bulk(game: RCT2) -> list[FootpathScanRow]:
                 int(elem["tileX"]),
                 int(elem["tileY"]),
                 int(elem.get("baseZ") or 0),
-                _classify_addition_kind(ident, add_idx),
+                _classify_addition_kind(ident, add_idx, elem.get("edges")),
                 bool(elem.get("isQueue", False)),
                 _footpath_is_sloped(elem),
             )

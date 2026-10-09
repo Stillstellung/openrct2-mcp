@@ -422,6 +422,7 @@ def place_ride_at_best_tile(
     connect_paths: bool = True,
     connect_radius: int = 15,
     max_distance: int | None = 12,
+    ride_builder: Any | None = None,
 ) -> dict[str, Any]:
     """Place a stall or flat ride on open land; flat ride entrance/exit face the nearest path.
 
@@ -489,12 +490,18 @@ def place_ride_at_best_tile(
             f"No open land of {fp_w + 2}x{fp_h + 2} has free tiles in front of an entrance and exit"
         )
 
-    ride = game.rides.place_flat_ride(
-        obj=obj,
-        tile=Tile(tx, ty),
-        entrance=Tile(*access["entrance"]),
-        exit=Tile(*access["exit"]),
-        direction=direction,
+    from openrct2_mcp.ride_ops import place_flat_ride_or_clean_up
+
+    ride = place_flat_ride_or_clean_up(
+        game,
+        ride_builder,
+        lambda: game.rides.place_flat_ride(
+            obj=obj,
+            tile=Tile(tx, ty),
+            entrance=Tile(*access["entrance"]),
+            exit=Tile(*access["exit"]),
+            direction=direction,
+        ),
     )
     result: dict[str, Any] = {
         "ride_id": ride.data.id,

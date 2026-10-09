@@ -310,6 +310,30 @@ def demolish_ride(game: RCT2, ride_id: int) -> dict:
     return {"demolished": True, "ride_id": ride_id, "refund": game.state.park_cash() - before}
 
 
+def _ride_ids(ride_builder: RideBuilderClient) -> set[int]:
+    return {int(r["id"]) for r in ride_builder.call("listAllRides") or [] if isinstance(r, dict) and "id" in r}
+
+
+def place_flat_ride_or_clean_up(game: RCT2, ride_builder: RideBuilderClient | None, place: Any) -> Any:
+    """Run ``place()`` (a pyrct2 flat-ride placement) and demolish any ride it leaves behind on failure.
+
+    pyrct2 creates the ride before placing its track, and only rolls back when the
+    entrance or exit fails; a failed track placement (uneven land, no clearance)
+    leaves an empty ride in the park's ride list.
+    """
+    try:
+        before = _ride_ids(ride_builder) if ride_builder is not None else None
+    except Exception:
+        before = None
+    try:
+        return place()
+    except Exception:
+        if before is not None:
+            for ride_id in sorted(_ride_ids(ride_builder) - before):
+                game.execute("ridedemolish", {"ride": ride_id, "modifyType": 0})
+        raise
+
+
 def ride_status_is_open(status: object) -> bool:
     """Return True when bridge/pyrct2 status indicates the ride is open."""
     label = str(status or "").lower()

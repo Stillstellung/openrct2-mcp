@@ -81,6 +81,16 @@ def advance_ticks_with_speed(
         result = game.advance_ticks(max(1, ticks))
         info = {"boosted_to": game_speed_label(restore_to), "restore_to": game_speed_label(restore_to)}
     ensure_paused(game)
+    if isinstance(result, dict) and result.get("success") is False:
+        error = result.get("error", "advance_failed")
+        message = result.get("message", error)
+        if error == "already_in_progress":
+            message += (
+                ". An earlier advance is still waiting for its target tick (the game was paused"
+                " under it, e.g. by a script connecting through SESSION, which pauses on connect)."
+                " Unpause the game until it re-pauses itself, then retry."
+            )
+        raise RuntimeError(f"advance_ticks: {error}: {message}")
     payload = result.get("payload", {}) if isinstance(result, dict) else {}
     return {"ticks": ticks, **info, **payload}
 

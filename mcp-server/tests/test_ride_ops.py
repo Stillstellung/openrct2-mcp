@@ -12,6 +12,49 @@ from openrct2_mcp.ride_ops import (
 )
 
 
+class FlatRideCleanupTests(unittest.TestCase):
+    class _Builder:
+        def __init__(self, ids):
+            self.ids = list(ids)
+
+        def call(self, endpoint, params=None):
+            assert endpoint == "listAllRides"
+            return [{"id": i} for i in self.ids]
+
+    class _Game:
+        def __init__(self, builder):
+            self.builder = builder
+            self.demolished = []
+
+        def execute(self, action, params):
+            assert action == "ridedemolish"
+            self.demolished.append(params["ride"])
+            self.builder.ids.remove(params["ride"])
+
+    def test_failed_placement_demolishes_the_new_empty_ride(self):
+        from openrct2_mcp.ride_ops import place_flat_ride_or_clean_up
+
+        builder = self._Builder([0, 1, 2])
+        game = self._Game(builder)
+
+        def place():
+            builder.ids.append(9)  # ride_create succeeded, track_place then failed
+            raise ActionError(status=ActionStatus.NO_CLEARANCE, title="Can't construct", message="Raise or lower land")
+
+        with self.assertRaises(ActionError):
+            place_flat_ride_or_clean_up(game, builder, place)
+        self.assertEqual(game.demolished, [9])
+        self.assertEqual(builder.ids, [0, 1, 2])
+
+    def test_success_keeps_the_ride(self):
+        from openrct2_mcp.ride_ops import place_flat_ride_or_clean_up
+
+        builder = self._Builder([0])
+        game = self._Game(builder)
+        self.assertEqual(place_flat_ride_or_clean_up(game, builder, lambda: "ride"), "ride")
+        self.assertEqual(game.demolished, [])
+
+
 class RideStatusTests(unittest.TestCase):
     def test_open_status_variants(self):
         for status in ("open", "ride_status.open", "1", "OPEN"):

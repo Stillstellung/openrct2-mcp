@@ -51,9 +51,16 @@ General lessons from a full playthrough (details in `docs/playthrough-forest-fro
   `completed`
 - **The binding limit is `park.suggestedGuestMaximum`**, not marketing. Over it, arrivals drop to a
   quarter. Read it with `bridge_payload(game, "park.suggestedGuestMaximum")` (and
-  `park.guestGenerationProbability`; it is recomputed weekly). Each open ride added about 35 to the
-  cap, each stall about 15. It went 85 -> 819 with 17 rides and 7 stalls; a 650 goal needed about 12
-  rides. Cheap flat rides ($50-$200) are the best cap per dollar
+  `park.guestGenerationProbability`; both are recomputed every 512 ticks). The cap is the sum of each
+  open ride's bonus: Launched Freefall 65, Top Spin / Go-Karts 55, Merry-Go-Round / Ferris Wheel /
+  3D Cinema / Motion Simulator 45, Twist / Maze / Spiral Slide 40, Bumper Cars / Pirate Ships 35,
+  Space Rings 30, Haunted House 22, wooden coaster 105, food / drink / shop / info kiosk 15, restroom 5.
+  Flat rides cost about $10 of build price per cap point (Bumper Cars $440, Twist $405, Top Spin $650)
+- **Arrivals per week** = 4096 x probability / 65536: base probability is 50 + (rating - 200), capped
+  at 700 (about 44 a week). Campaigns add on top and **ignore the cap**: free-ride vouchers 300 (19 a
+  week for $50/week), free entry 400 (25 a week, but only if the entry fee is $4+), half-price entry 200
+  (needs $6+), free food/drink 200, `PARK` 250 ($350/week), `RIDE` 200 ($200/week). Campaigns are paid
+  up front
 - **Any loaded ride can be built regardless of research**, including "uninvented" ones (Ferris wheel,
   bumper cars, Top Spin were placed with research funding NONE). Set research to NONE and spend the
   money on rides. `place_ride_at_best_tile_tool` needs a 5x5 open site (6x6 for stalls, so use
@@ -78,12 +85,29 @@ General lessons from a full playthrough (details in `docs/playthrough-forest-fro
 - Handymen: 11 for ~220 path tiles and 900 guests kept `path_disgusting` away; give each a patrol
   box (`set_staff_patrol_tool`) over a different stretch
 
+**Bumbly Beach (750 guests by year 2, won with 1,532 guests and rating 953 from $5,000 cash)**
+- Max the loan, research NONE, then 12 flat rides along two new avenues in the first hour of game
+  time: cap 210 -> 860 in a week. 750 guests arrived by month 2; the park peaked at 1,600
+- **Charge park entry when `unlockAllPrices` is on** (`park.flags`): $15 entry plus the free-entry and
+  half-price campaigns ($50/week each) roughly doubled arrivals and paid for everything (cash $5k ->
+  $50k). Guests are not deterred while the fee stays below `park.totalRideValueForMoney`
+- **Price rule for guests who paid entry**: they refuse a ride (`bad_value`) when price >
+  (`ride.value` // 4) x 2. Ride value halves as the ride ages and drops 25% when another ride of the
+  same type is open, so prices that were fine go bad months later. A single month of stale prices
+  (plus rain) cut rating 999 -> 816 and happiness 178 -> 118. Reprice every game week, not monthly
+- **Half of guests want intensity >= 4** (they think `more_thrilling` at gentle rides). Top Spin (4.8),
+  Launched Freefall and the Swinging Inverter Ship serve them cheaply; gentle rides serve the rest
+- `refurbish_ride_tool` resets age, so value and the price guests accept recover: Top Spins
+  $203, Big Dipper $3,187
+
 **Fast-forwarding a long run**
 - `advance_time(16384)` is one game month and took about 55 s wall clock; 24 months is about 20 minutes
 - Run a read-only background poller while the clock moves (park stats and
   `guest_thought_summary` every 10 s into a log file), then read a compact summary after each
   month. It costs no model tokens and catches mid-month dips. A second client on the bridge port works
-  alongside the MCP server
+  alongside the MCP server, but **connect with a raw `pyrct2.connection.Connection`, not
+  `SESSION.game`**: SESSION pauses the game on connect, which strands a running `advance_time`
+  (the next one then fails with `already_in_progress` until the game is unpaused)
 - Delegate read-only analysis (crowd-relief path plans) to a subagent while the clock runs; tell it
   explicitly not to build or advance time. Avoid `list_rides` and `park_health_report_tool` for
   routine checks (huge output); use `get_ride`, `list_refurbish_candidates_tool` or a small script

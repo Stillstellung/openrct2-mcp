@@ -76,5 +76,47 @@ class GameTimeStatusTests(unittest.TestCase):
         self.assertEqual(status["game_speed_source"], "plugin")
 
 
+class AdvanceTicksTests(unittest.TestCase):
+    class _FakeActions:
+        def game_set_speed(self, speed):
+            pass
+
+    class _FakeGame:
+        def __init__(self, result):
+            self.actions = AdvanceTicksTests._FakeActions()
+            self._result = result
+            self.paused = True
+
+        def get_status(self):
+            return {"payload": {"paused": self.paused}}
+
+        def pause(self):
+            self.paused = True
+
+        def unpause(self):
+            self.paused = False
+
+        def advance_ticks(self, ticks):
+            return self._result
+
+    def test_returns_payload_on_success(self):
+        from openrct2_mcp.time_tools import advance_ticks_with_speed
+
+        game = self._FakeGame({"success": True, "payload": {"ticksAdvanced": 100}})
+        result = advance_ticks_with_speed(game, 100)
+        self.assertEqual(result["ticksAdvanced"], 100)
+        self.assertTrue(game.paused)
+
+    def test_raises_when_bridge_refuses(self):
+        from openrct2_mcp.time_tools import advance_ticks_with_speed
+
+        game = self._FakeGame(
+            {"success": False, "error": "already_in_progress", "message": "advance_ticks already in progress"}
+        )
+        with self.assertRaisesRegex(RuntimeError, "already_in_progress"):
+            advance_ticks_with_speed(game, 100)
+        self.assertTrue(game.paused)
+
+
 if __name__ == "__main__":
     unittest.main()

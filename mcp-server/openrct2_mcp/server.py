@@ -714,7 +714,11 @@ def place_flat_ride(
     exit_y: int,
     direction: str = "NORTH",
 ) -> str:
-    """Place a flat ride (e.g. MERRY_GO_ROUND) with entrance and exit tiles."""
+    """Place a flat ride (e.g. MERRY_GO_ROUND) with entrance and exit tiles.
+
+    A failed placement leaves no empty ride behind.
+    """
+    from openrct2_mcp.ride_ops import place_flat_ride_or_clean_up
     from openrct2_mcp.tower_rides import is_tower_ride, tower_ride_message
 
     with game_context() as game:
@@ -722,12 +726,16 @@ def place_flat_ride(
         obj = _resolve_ride_object(ride_object, game)
         if is_tower_ride(obj):
             raise ValueError(tower_ride_message(obj))
-        ride = game.rides.place_flat_ride(
-            obj=obj,
-            tile=Tile(tile_x, tile_y),
-            entrance=Tile(entrance_x, entrance_y),
-            exit=Tile(exit_x, exit_y),
-            direction=Direction[direction.upper()],
+        ride = place_flat_ride_or_clean_up(
+            game,
+            SESSION.ride_builder,
+            lambda: game.rides.place_flat_ride(
+                obj=obj,
+                tile=Tile(tile_x, tile_y),
+                entrance=Tile(entrance_x, entrance_y),
+                exit=Tile(exit_x, exit_y),
+                direction=Direction[direction.upper()],
+            ),
         )
         return _json({"ride_id": ride.data.id, "name": ride.data.name})
 
@@ -3526,6 +3534,7 @@ def place_ride_at_best_tile_tool(
                 is_stall=is_stall,
                 connect_paths=connect_paths,
                 max_distance=max_distance,
+                ride_builder=SESSION.ride_builder,
             )
         )
 

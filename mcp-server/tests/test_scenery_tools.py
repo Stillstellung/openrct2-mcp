@@ -15,6 +15,18 @@ def _brute_nearest(
     return min(abs(x - px) + abs(y - py) for px, py in points)
 
 
+class AdditionKindTests(unittest.TestCase):
+    def test_four_way_tile_has_no_room_for_a_bin(self):
+        self.assertEqual(scenery_tools._classify_addition_kind("", None, 15), "no_room")
+
+    def test_tile_with_a_free_edge_is_a_candidate(self):
+        self.assertIsNone(scenery_tools._classify_addition_kind("", None, 14))
+        self.assertIsNone(scenery_tools._classify_addition_kind("", None))
+
+    def test_existing_addition_wins(self):
+        self.assertEqual(scenery_tools._classify_addition_kind("rct2.footpath_item.litter1", 3, 15), "bin")
+
+
 class SpacingGridTests(unittest.TestCase):
     def test_spacing_grid_matches_brute_force(self):
         random.seed(42)

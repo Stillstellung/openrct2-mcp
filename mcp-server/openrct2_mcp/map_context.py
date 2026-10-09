@@ -169,10 +169,10 @@ def area_context(
     nearby = rides_near(game, ride_builder, tile_x, tile_y, radius * 2, model=model)
 
     try:
-        tile_data = tile_data(game, tile_x, tile_y)
-        surface = next((e for e in tile_data.elements if e.type == "surface"), None)
+        tile = tile_data(game, tile_x, tile_y)
+        surface = next((e for e in tile.elements if e.type == "surface"), None)
         surface_info = {
-            "element_count": len(tile_data.elements),
+            "element_count": len(tile.elements),
             "ownership": getattr(surface, "ownership", None) if surface else None,
             "base_z": getattr(surface, "baseZ", None) if surface else None,
             "slope": getattr(surface, "slope", None) if surface else None,
