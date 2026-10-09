@@ -35,3 +35,36 @@ def test_generates_closed_wandering_circuit():
     stats = result["stats"]
     assert stats["turns"] >= 4 and stats["footprint_tiles"] > 60
     assert render_ascii(design)
+
+
+def test_auto_chain_fixes_a_low_climb():
+    from openrct2_mcp.coaster_freeform import auto_chain_climbs, momentum_profile
+
+    # Station, a short chain lift, a dip, a long flat cruise, then an unchained climb.
+    pieces = [{"track_type": 2}, {"track_type": 6, "has_chain_lift": True}, {"track_type": 9, "has_chain_lift": True}]
+    pieces += [{"track_type": 12}, {"track_type": 15}] + [{"track_type": 0}] * 12 + [{"track_type": 6}, {"track_type": 9}]
+    design = {"version": 1, "ride_type": 15, "origin": {"x": 0, "y": 0, "z": 12, "direction": 2}, "pieces": pieces}
+    low = [p for p in momentum_profile(design) if p["dz"] > 0 and not p["chain"]]
+    assert low and low[0]["head"] < 1.5
+    fixed, chained, unfixable = auto_chain_climbs(design)
+    assert {17, 18} <= set(chained) and 16 in chained and not unfixable  # the climb and the flat before it
+    assert all(fixed["pieces"][i].get("has_chain_lift") for i in chained)
+    assert "has_chain_lift" not in design["pieces"][17]  # input left untouched
+
+
+def test_tight_turn_filter_and_station_starts():
+    from fakes import FakeMap
+
+    from openrct2_mcp.coaster_freeform import WANDER_MODULES, station_starts, without_tight_turns
+
+    names = {m.name for m in WANDER_MODULES if without_tight_turns(m)}
+    assert "turn_l" not in names and "bank_turn_r" not in names and "big_turn_l" in names
+    fm = FakeMap(width=30, height=30)
+    for x in range(30):
+        fm.add_path(x, 12)
+    fm.add_scenery(10, 10)  # a flower bed does not block a station
+    fm.add_track(20, 10, ride=1)
+    starts = station_starts(fm.model(), 0, 0, 29, 29)
+    assert (8, 10, 12, 2) in starts  # tiles 7..12 along y=10, path 2 tiles away
+    assert not any(s[1] == 10 and s[3] == 2 and s[0] - 1 <= 20 <= s[0] + 4 for s in starts)  # track in the way
+    assert not any(s[1] == 20 for s in starts)  # no path within 2 tiles

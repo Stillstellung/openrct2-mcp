@@ -112,6 +112,10 @@ Claude Code  --MCP-->  Python MCP server  --TCP-->  openrct2-bridge (park ops)
 | `set_park_settings` | Entrance fee, open/close park |
 | `advance_time` | Step simulation ticks |
 | `get_research` | Research state |
+| `guest_thought_summary_tool` / `guest_density_tool` | Every guest's needs and thoughts in one scan; crowding heatmap on the park map |
+| `find_installed_objects_tool` / `load_object_tool` | Add installed objects the scenario left out (e.g. an ATM), regardless of research |
+| `ride_setting_tool` | Read or change a ride setting (lift speed, circuits, waiting times) with the values that ride allows |
+| `buy_land_tool(dry_run=true)` / `terraform_region_tool(dry_run=true)` | Price land and terraforming with the game's own query before paying |
 
 ### Coaster building
 
@@ -137,6 +141,11 @@ Claude Code  --MCP-->  Python MCP server  --TCP-->  openrct2-bridge (park ops)
 | `coaster_stats` | Current excitement/intensity/nausea |
 | `coaster_delete` | Demolish coaster |
 | `list_loaded_ride_objects` | Valid ride object indices |
+| `coaster_find_freeform_sites_tool` | Sweep every station spot in the park for layouts that close a circuit |
+| `coaster_generate_freeform_tool` | Wandering layout with drops, helixes and inversions; reports `estimated_cost`, auto-chains low-momentum climbs |
+| `coaster_fit_design_tool(dry_run=true)` | Lint and price a design at a target without building |
+| `get_ride_trains_tool` | Where each train is and how fast (spot stalls) |
+| `coaster_set_chain_lift_tool` | Add or remove chain lifts on built track (fix a stalling train) |
 
 ## Coaster workflow
 

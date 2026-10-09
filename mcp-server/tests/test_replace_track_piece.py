@@ -56,3 +56,33 @@ def test_restores_old_piece_when_placement_fails():
 def test_rejects_shape_changing_swap():
     with pytest.raises(ValueError, match="geometry"):
         replace_track_piece(_Game(), 9, 60, 32, 4)
+
+
+class _ChainGame(_Game):
+    def __init__(self, chained):
+        super().__init__()
+        self.chained = chained
+        self.flags = []
+
+    def _query(self, endpoint, params):
+        raw = super()._query(endpoint, params)
+        raw["elements"][1]["hasChainLift"] = self.chained
+        return raw
+
+    def execute(self, endpoint, params):
+        if endpoint == "trackplace":
+            self.flags.append(params["trackPlaceFlags"])
+        return super().execute(endpoint, params)
+
+
+def test_swap_keeps_an_existing_chain():
+    game = _ChainGame(chained=True)
+    assert replace_track_piece(game, 9, 60, 32, 216)["chain_lift"] is True
+    assert game.flags == [1]
+
+
+def test_add_chain_without_changing_type():
+    game = _ChainGame(chained=False)
+    result = replace_track_piece(game, 9, 60, 32, None, chain_lift=True)
+    assert result["ok"] and result["new_track_type"] == 0 and result["chain_lift"] is True
+    assert game.executed == [("trackremove", 0), ("trackplace", 0)] and game.flags == [1]

@@ -60,6 +60,7 @@ class TrackPiece:
     top: int
     direction: int
     ride_type: int | None = None
+    chain: bool = False
 
 
 @dataclass(frozen=True)
@@ -164,7 +165,8 @@ class Chunk:
                 z, edges, None if slope_dir < 0 else slope_dir, bool(queue), None if addition < 0 else addition, bool(broken)))
         for i, z, ride, track_type, seq, top, direction, *rest in p["track"]:
             ride_type = rest[0] if rest and rest[0] >= 0 else None
-            c.track.setdefault(i, []).append(TrackPiece(z, ride, track_type, seq, top, direction, ride_type))
+            chain = bool(rest[1]) if len(rest) > 1 else False
+            c.track.setdefault(i, []).append(TrackPiece(z, ride, track_type, seq, top, direction, ride_type, chain))
         for i, z, ride, station, kind, direction in p["entrances"]:
             c.entrances.setdefault(i, []).append(EntrancePiece(
                 z, None if ride < 0 else ride, None if station < 0 else station, ENTRANCE_KIND.get(kind, str(kind)), direction))
@@ -382,7 +384,7 @@ def raw_elements(view: TileView) -> list[dict[str, Any]]:
     for t in view.track:
         els.append({"type": "track", "baseZ": t.z * 8, "baseHeight": t.z, "clearanceZ": t.top * 8, "ride": t.ride,
                     "trackType": t.track_type, "sequence": t.sequence, "direction": t.direction,
-                    "rideType": t.ride_type, "isGhost": False})
+                    "rideType": t.ride_type, "hasChainLift": t.chain, "isGhost": False})
     for e in view.entrances:
         els.append({"type": "entrance", "baseZ": e.z * 8, "baseHeight": e.z, "clearanceZ": (e.z + 6) * 8,
                     "ride": e.ride, "station": e.station, "object": ENTRANCE_OBJECT.get(e.kind, 0),

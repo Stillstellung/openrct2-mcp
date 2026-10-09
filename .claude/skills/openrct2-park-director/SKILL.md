@@ -1,17 +1,56 @@
 ---
 name: openrct2-park-director
-description: Orchestrate OpenRCT2 park changes via MCP — survey, plan, build, verify. Use for coaster builds, theming, staff patrol, and optimization goals.
+description: Run an OpenRCT2 park through the MCP server - open a scenario, read guest thoughts and fix complaints (crowding, cash, dirt, vandalism, toilets), build and tune coasters, landscape, map and verify. Use for any park-management, building, theming or optimization goal.
 ---
 
 # OpenRCT2 Park Director
 
 ## Standard workflow
 
-1. `openrct2_status` — confirm bridge + ride-builder connected
-2. `get_park_overview` / `park_health_report_tool` — baseline metrics
-3. **Build coasters** — survey → plan → build (see below)
-4. **Verify** — `capture_game_view` and/or `advance_time` with ticks
-5. Remind user to **save the park** before large AI builds
+1. `openrct2_status` — confirm bridge + ride-builder connected **and `park_loaded: true`**. On the
+   title screen the plugins still answer from a demo park, so reads mislead and writes are refused
+2. `get_park_overview` / `park_health_report_tool` / `guest_thought_summary_tool` — baseline metrics
+3. `render_map_tool()` — see the park before planning anything
+4. **Build or fix** — see "Running a park" and the coaster sections below
+5. **Verify** — `advance_time`, then re-read thoughts / ride stats; `map_diff_tool` for builds
+6. Remind user to **save the park** before large AI builds
+
+## Running a park (playbook)
+
+General lessons from a full playthrough (details in `docs/playthrough-forest-frontiers.md`).
+
+**Opening a scenario**
+- Read the objective and money first (`get_park_overview`, `get_finance_summary_tool`). Pause,
+  set research priorities, open the park on day 1
+- First build: one main path from the gate, 4-6 cheap flat rides with doors facing the path,
+  food + drinks + restroom, 1 handyman (orders 7) + 1 mechanic (orders 3). Check `orders` after
+  hiring: staff with orders 0 never sweep or repair
+- A modest first coaster beats a big one; guests come from rating and ride count, and income
+  (ride prices) is the early bottleneck, not guests
+- Check whether the park charges entry or per ride (`entrance_fee` 0 = pay per ride)
+
+**Read the thought mix, not the rating.** The rating lags dirt by weeks, then falls off a cliff.
+`guest_thought_summary_tool` aggregates every guest in about a second:
+
+| Thought | Means | Fix |
+|---|---|---|
+| `crowded` | dense walking crowds on a tile | `guest_density_tool` heatmap, then a second lane, a bypass beside paths lined with ride doors, or a loop so guests aren't funnelled down one route |
+| `not_thirsty` / `not_hungry` | **good**: passed a stall without needing it | nothing (many = plenty of stalls) |
+| `drink` / `burger` / `toilet` / `map` / `umbrella` | wants one now | put that stall or a restroom / info kiosk where those guests are |
+| `running_out` / `cant_afford_ride` | low on cash | ATMs: `find_installed_objects_tool("atm")` + `load_object_tool` if the scenario has none, then `place_stall`; or cut prices |
+| `path_disgusting` / `bad_litter` / `sick` | dirt and vomit | zoned handymen (about 1 per 25 path tiles once intense coasters run), bins, benches |
+| `vandalism` | broken benches/bins | security guards (about 1 per 200 guests), `repair_vandalism_tool` |
+| `bad_value` (by ride) | price too high for the ride's age/rating | lower that ride's price; old flat rides need cheaper tickets |
+| `not_while_raining` | rain | info kiosks sell umbrellas; it passes |
+| `more_thrilling` | wants intensity | a new intense coaster (see Freeform) |
+
+**Other levers**
+- Research greys out a category when nothing is left to research in it. `load_object_tool` adds
+  any installed object (ATMs, other rides) regardless of research
+- Price before paying: `buy_land_tool(dry_run=true)` (land can be about $30 a tile),
+  `terraform_region_tool(dry_run=true)`, `coaster_fit_design_tool(dry_run=true)`
+- Marketing campaigns bring guests fast; add staff before the extra dirt arrives
+- Money is in units of 10 in raw results (`spent: 1200` = $120); tools that report dollars say so
 
 ## Coaster build pipeline (survey → plan → build)
 
@@ -103,7 +142,7 @@ Use when the user wants a **custom** coaster designed to their prompt (not a pro
 5. **Circuit closes**: simulated endpoint must equal the origin exactly (lint reports the x/y/z/direction delta when it doesn't)
 6. Turns (`42` left / `43` right small, `16`/`17` large) are **flat-only**; finish slope transitions first
 7. No diagonal pieces in v1 (lint rejects them)
-8. z accounting: tile_z units (`baseZ // 8`); Up25 = +2/picece, FlatToUp25/Up25ToFlat = +1
+8. z accounting: tile_z units (`baseZ // 8`); Up25 = +2/piece, FlatToUp25/Up25ToFlat = +1
 9. **Drop soon after the lift** — long flat cruises at the lift apex stall the test train
    (ratings never settle); put the big descent within a few pieces of the peak, then
    bumps/turns run on drop momentum
@@ -188,24 +227,44 @@ Use low-level survey tools only when auto-build fails or user asks for step-by-s
 
 ## Freeform coasters (preferred for anything bigger than a hairpin)
 
+- **Find a station first:** `coaster_find_freeform_sites_tool()` sweeps every possible station
+  spot in the park (or `area=`) in seconds and ranks the ones that close a circuit. In a full
+  park very few do; if none close, try `lifts="16,13,10"`, `avoid_tight_turns=false`, a smaller
+  `budget`, or buy land (price it with `buy_land_tool(dry_run=true)`)
 - `coaster_generate_freeform_tool(x1, y1, x2, y2, station_x, station_y, station_direction, lift, budget)`
   wanders modules (sloped turns, drops, hops, helixes, banked turns, mid-course lifts, loops
   and corkscrews on looping types) inside the owned rectangle, flies over paths/rides only
-  above their top, and closes back into the station with A*. Place the result with
-  `coaster_fit_design_tool` (add `excavate=true` if it tunnels)
-- Station choice decides everything: the station tiles and the tile before it must be owned,
-  flat and clear, with room ahead for lift + drop. When one guess fails, sweep candidate
-  stations (each fails in milliseconds) instead of hand-tuning
+  above their top, and closes back into the station with A*. It returns `estimated_cost`
+  (the game's own price for the track) and `park_cash`. Place the result with
+  `coaster_fit_design_tool` (add `excavate=true` if it tunnels; `dry_run=true` re-prices)
+- Defaults that encode hard lessons:
+  - `avoid_tight_turns=true`: a 31-high drop straight into 3-tile banked turns rated intensity
+    14.8, which guests refuse (they ride up to about 10)
+  - `auto_chain=true`: chain lifts go on climbs the train probably can't coast up
+    (`auto_chained_pieces`); a 112-piece ride stalled without them
+  - `clear_small_scenery=true`: track removes trees and flower beds as it is placed
 - Built-up parks need cruising height: larger `lift` plus mid-course lifts let the track pass
   over existing rides; a ground-level first drop traps it among obstacles
 - Freeform circuits often enclose their own station; plan guest access (a bridge, tunnel, or
-  the one open side) before placing
+  the one open side) before placing. A station above the ground needs a raised landing and a
+  ramp; the land beside it may not be owned
 - Theme with `theme_ride_tool` (name, colours by name, entrance style e.g. "Log Cabin")
 
 ## Running a coaster after it is built
 
 - **Verify guests can ride**: within a few in-game days `get_ride` should show customers.
-  0 customers with guests standing in the queue means the queue is not linked to the entrance
+  0 customers with guests standing in the queue means the queue is not linked to the entrance.
+  `get_ride_location_tool(id)` lists doors without a path
+- **Ratings that never settle** after a test mean a stalling train: `get_ride_trains_tool(id)`
+  shows where (`rolling backwards` on a climb). Add chains to the climbs and flats just before
+  that spot with `coaster_set_chain_lift_tool(id, '[[x,y],...]', confirm_destructive=true)`,
+  then `coaster_test`
+- **Ratings move after changes**: the build test can report a partial lap; trust the rating
+  after a few laps in operation. Any setting change re-rates the ride
+- **Ride settings**: `ride_setting_tool(id, "lift_hill_speed")` shows the allowed values for that
+  ride before you change anything (lift speed was 4-6 on a looping coaster, not 10+)
+- **Too intense** (above about 10): a demolish of a never-opened ride refunds about 99% of the
+  track, so rebuilding a better layout is cheap; brakes need flat track before the hot spot
 - **Entrance facing**: a ride entrance/exit's stored direction points at the station tile
   (0 = -x, 1 = +y, 2 = +x, 3 = -y); its opening is direction + 2. A backwards entrance
   leaves the queue's end tile without an edge into it. The fit tool now re-points these
@@ -227,7 +286,8 @@ Use low-level survey tools only when auto-build fails or user asks for step-by-s
 |--------------|---------------|
 | Make it cuter | `get_path_graph_tool` → `apply_theme_preset_tool("cute")` → `capture_game_view` |
 | Staff on paths | `get_path_graph_tool` → `optimize_staff_coverage_tool` → `park_health_report_tool` |
-| Tune one ride | `get_ride` → `set_ride_price` / inspection via ride settings |
+| Tune one ride | `get_ride` → `set_ride_price` / `ride_setting_tool` |
+| Fix complaints | `guest_thought_summary_tool` → table in "Running a park" → `advance_time` → re-check |
 
 ## Footpaths and path shapes
 
@@ -267,5 +327,6 @@ Use low-level survey tools only when auto-build fails or user asks for step-by-s
 ## Connection troubleshooting
 
 - `openrct2_status` reports `connected: false` with the reason; the server reconnects automatically after the game restarts
+- `park_loaded: false` / `game_mode: "title"`: no park is open (the title screen's demo park answers queries). Ask the user to load a park before any live work
 - Run only one OpenRCT2 instance at a time (both would claim the same plugin ports)
 - If the server itself is down, reconnect it with `/mcp` in Claude Code

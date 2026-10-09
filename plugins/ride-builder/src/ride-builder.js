@@ -117,7 +117,10 @@ function main() {
     }
 
     const endpoints = new Map([
-        ["health",               () => Promise.resolve({ status: "ok", plugin: "ride-builder", port })],
+        // mode is "normal" with a park loaded, "title" on the title screen (whose demo
+        // park still answers every query), or an editor mode.
+        ["health",               () => Promise.resolve({ status: "ok", plugin: "ride-builder", port,
+                                     mode: context.mode, park: context.mode === "normal" ? park.name : null })],
         ["listAllRides",         () => handleListAllRides()],
         ["getAllTrackSegments",  () => handleGetAllTrackSegments()],
         ["deleteAllRides",       () => handleDeleteAllRides()],
@@ -540,7 +543,7 @@ function main() {
                     } else if (el.type === "track") {
                         f |= FLAG.TRACK;
                         track.push([i, z, el.ride, el.trackType, el.sequence == null ? 0 : el.sequence, tz(el.clearanceZ), el.direction,
-                            el.rideType == null ? -1 : el.rideType]);
+                            el.rideType == null ? -1 : el.rideType, el.hasChainLift ? 1 : 0]);
                     } else if (el.type === "entrance") {
                         f |= FLAG.ENTRANCE;
                         entrances.push([i, z, el.ride == null ? -1 : el.ride, el.station == null ? -1 : el.station, el.object, el.direction]);

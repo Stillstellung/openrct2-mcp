@@ -507,3 +507,18 @@ out of cash 7.5%, wants a toilet / drink / umbrella / map about 4% each.
   intensity 9.57, nausea 5.16** (9.45 at speed 4, so the lift speed barely
   matters; the 7.22 from the build test was a partial reading). 89 riders,
   satisfaction 75.
+
+## Phase 11: turning session scripts into tools
+
+Session-only scripts became tools so a new park starts with them:
+`guest_density_tool` (crowding heatmap, 1,396 guests in 0.6 s), `coaster_find_freeform_sites_tool`
+(335 station spots in 7 s), pricing via `estimated_cost` on the generator and `dry_run` on
+`coaster_fit_design_tool` / `buy_land_tool` (a temporary ride is created and removed when the
+park has no ride of that type), automatic chains on low-momentum climbs (calibrated on Grizzly's
+stall), `get_ride_trains_tool`, `coaster_set_chain_lift_tool`. `replace_track_piece` used to drop
+a piece's chain; it now keeps it, and the map snapshot records chains.
+
+Found while testing: with the title screen up, the plugins answer from the title's demo park, so
+live checks silently ran against the wrong park. The plugin now reports the game mode and the
+server refuses game-changing requests outside a loaded park. Track prices depend on the ride type
+(flat piece $45 looping vs $37.50 wooden), so pricing must use a ride of the same type.

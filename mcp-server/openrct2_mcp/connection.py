@@ -33,6 +33,14 @@ def is_read_request(endpoint: str) -> bool:
     return endpoint.lower().startswith(_READ_PREFIXES)
 
 
+class NoParkLoadedError(RuntimeError):
+    """The game is on the title screen or in an editor, not in a park."""
+
+
+# How long a game-mode check stays valid before writes check again (seconds).
+MODE_CHECK_TTL = 2.0
+
+
 class ConnectionError(RuntimeError):
     """Raised when OpenRCT2 plugins are not reachable."""
 
@@ -149,6 +157,7 @@ class RideBuilderClient:
 
     def call(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
         if not is_read_request(endpoint):
+            SESSION.require_park()
             SESSION.mark_map_stale()
         response = self.send(endpoint, params)
         if not response.get("success"):
@@ -176,6 +185,32 @@ class GameSession:
         self._bridge_port = DEFAULT_BRIDGE_PORT
         self._known_game_speed: int | None = None
         self._map: Any = None
+        self._mode: str | None = None
+        self._mode_checked = float("-inf")
+
+    def game_mode(self, max_age: float = MODE_CHECK_TTL) -> str | None:
+        """"normal" (park loaded), "title", an editor mode, or None if unknown (older plugin)."""
+        import time
+
+        now = time.monotonic()
+        if now - self._mode_checked > max_age:
+            try:
+                health = self.ride_builder.send("health")
+                self._mode = (health.get("payload") or {}).get("mode")
+            except Exception:  # noqa: BLE001 - plugin missing: don't block, just don't know
+                self._mode = None
+            self._mode_checked = now
+        return self._mode
+
+    def require_park(self) -> None:
+        """Refuse game-changing requests unless a park is loaded (not the title screen)."""
+        mode = self.game_mode()
+        if mode is not None and mode != "normal":
+            what = "on the title screen" if mode == "title" else f"in {mode.replace('_', ' ')} mode"
+            raise NoParkLoadedError(
+                f"OpenRCT2 is {what}, not in a park: load a park first. "
+                "(The title screen runs a demo park that answers queries, so reads would mislead too.)"
+            )
 
     @property
     def map(self):
@@ -196,6 +231,7 @@ class GameSession:
 
         def send_and_mark(endpoint: str, params: dict | None = None) -> dict:
             if not is_read_request(endpoint):
+                self.require_park()
                 self.mark_map_stale()
             return send(endpoint, params)
 
@@ -281,6 +317,8 @@ class GameSession:
             self._ride_builder = None
         self._known_game_speed = None
         self._map = None
+        self._mode = None
+        self._mode_checked = float("-inf")
 
 
 SESSION = GameSession()

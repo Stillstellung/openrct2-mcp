@@ -129,17 +129,20 @@ def replace_track_piece(
     ride_id: int,
     tile_x: int,
     tile_y: int,
-    new_track_type: int,
+    new_track_type: int | None,
     *,
     tile_z: int | None = None,
     brake_speed: int = 0,
+    chain_lift: bool | None = None,
 ) -> dict[str, Any]:
     """Swap one track piece of a ride for another with the same geometry.
 
     Typical use: turn the flat before a station into block brakes (216) so a
-    block-sectioned coaster can run another train. Uses raw actions because
-    pyrct2's RideType enum lacks newer ride types (e.g. 99, Classic Wooden).
-    The ride is closed for the swap; the old piece is put back if placement fails.
+    block-sectioned coaster can run another train. new_track_type None keeps the
+    piece type (to add or remove a chain lift). chain_lift None keeps the piece's
+    current chain. Uses raw actions because pyrct2's RideType enum lacks newer ride
+    types (e.g. 99, Classic Wooden). The ride is closed for the swap; the old piece
+    is put back if placement fails.
     """
     from openrct2_mcp.design_lint import load_segments
 
@@ -162,6 +165,10 @@ def replace_track_piece(
         raise ValueError("That tile holds a later block of a multi-tile piece; use the piece's first tile")
     segments = load_segments()
     old_type = int(old["trackType"])
+    old_chain = bool(old.get("hasChainLift"))
+    if new_track_type is None:
+        new_track_type = old_type
+    new_chain = old_chain if chain_lift is None else bool(chain_lift)
     if not same_track_geometry(segments.get(old_type), segments.get(new_track_type)):
         raise ValueError(
             f"Track type {new_track_type} does not share piece {old_type}'s geometry; "
@@ -173,18 +180,18 @@ def replace_track_piece(
         "x": x, "y": y, "z": z, "direction": direction, "trackType": old_type, "sequence": 0,
     })
 
-    def place(track_type: int, speed: int) -> dict:
+    def place(track_type: int, speed: int, chain: bool) -> dict:
         return game.execute("trackplace", {
             "x": x, "y": y, "z": z, "direction": direction, "ride": ride_id,
             "trackType": track_type, "rideType": int(raw_ride["type"]),
             "brakeSpeed": speed, "colour": 0, "seatRotation": 4,
-            "trackPlaceFlags": 0, "isFromTrackDesign": False,
+            "trackPlaceFlags": 1 if chain else 0, "isFromTrackDesign": False,
         })
 
     try:
-        place(new_track_type, brake_speed)
+        place(new_track_type, brake_speed, new_chain)
     except Exception as exc:
-        place(old_type, 0)
+        place(old_type, 0, old_chain)
         return {
             "ok": False,
             "ride_id": ride_id,
@@ -198,6 +205,7 @@ def replace_track_piece(
         "tile": [tile_x, tile_y, z // 8],
         "old_track_type": old_type,
         "new_track_type": new_track_type,
+        "chain_lift": new_chain,
         "note": "Ride left closed; reopen it (and set trains) when ready.",
     }
 

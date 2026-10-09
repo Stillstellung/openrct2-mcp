@@ -600,6 +600,8 @@ def openrct2_status() -> str:
                     ),
                     "ride_builder_port": ride_builder.port,
                     "ride_builder": rb_health,
+                    "game_mode": (rb_health or {}).get("mode"),
+                    "park_loaded": (rb_health or {}).get("mode") == "normal",
                     "ride_builder_install": _ride_builder_install_state(),
                 }
             )
@@ -2517,26 +2519,163 @@ def replace_track_piece_tool(
     ride_id: int,
     tile_x: int,
     tile_y: int,
-    new_track_type: int,
+    new_track_type: int | None = None,
     tile_z: int | None = None,
     brake_speed: int = 0,
+    chain_lift: bool | None = None,
     confirm_destructive: bool = False,
 ) -> str:
     """Swap one track piece for another with identical geometry (closes the ride).
 
     Example: the flat before a station -> Block Brakes (216), so a block-sectioned
-    coaster can run one more train. Only same-shape swaps are allowed; the old
-    piece is restored if placement fails. Requires confirm_destructive=true.
+    coaster can run one more train. new_track_type omitted keeps the type;
+    chain_lift true/false adds or removes a chain (omitted keeps it). Only same-shape
+    swaps are allowed; the old piece is restored if placement fails. Requires
+    confirm_destructive=true. For several chain lifts use coaster_set_chain_lift_tool.
     """
     if not confirm_destructive:
         return _json({"ok": False, "error": "Set confirm_destructive=true to modify ride track."})
     with game_context() as game:
         ensure_paused(game)
         result = replace_track_piece(
-            game, ride_id, tile_x, tile_y, new_track_type, tile_z=tile_z, brake_speed=brake_speed
+            game, ride_id, tile_x, tile_y, new_track_type, tile_z=tile_z, brake_speed=brake_speed,
+            chain_lift=chain_lift,
         )
         log_action("replace_track_piece", {"ride_id": ride_id, "tile": [tile_x, tile_y], "new": new_track_type})
         return _json(result)
+
+
+@mcp.tool()
+def coaster_set_chain_lift_tool(
+    ride_id: int, tiles_json: str, chain: bool = True, confirm_destructive: bool = False
+) -> str:
+    """Add (or remove) chain lifts on built track pieces, e.g. to fix a stalling train.
+
+    tiles_json: [[x, y], [x, y, z], ...] first tiles of the pieces (z = track base
+    tile_z when pieces stack). Only straight climbs and flats can carry a chain.
+    Each piece is re-placed with the chain flag; the ride is closed, so reopen or
+    test it afterwards. Find where a train stalls with get_ride_trains_tool.
+    Requires confirm_destructive=true.
+    """
+    if not confirm_destructive:
+        return _json({"ok": False, "error": "Set confirm_destructive=true to modify ride track."})
+    tiles = json.loads(tiles_json)
+    results = []
+    with game_context() as game:
+        ensure_paused(game)
+        for t in tiles:
+            x, y = int(t[0]), int(t[1])
+            z = int(t[2]) if len(t) > 2 else None
+            try:
+                r = replace_track_piece(game, ride_id, x, y, None, tile_z=z, chain_lift=chain)
+                results.append({"tile": [x, y], "ok": r.get("ok"), "error": r.get("error")})
+            except Exception as exc:  # noqa: BLE001 - report each piece
+                results.append({"tile": [x, y], "ok": False, "error": str(exc)[:160]})
+        log_action("coaster_set_chain_lift", {"ride_id": ride_id, "pieces": len(tiles), "chain": chain})
+    done = sum(1 for r in results if r["ok"])
+    return _json({"ride_id": ride_id, "chain": chain, "changed": done, "failed": len(results) - done,
+                  "results": results, "note": "Ride left closed: coaster_test or open_ride when ready."})
+
+
+def train_state(head: dict) -> str:
+    """Plain reading of a train head from getRideTrains."""
+    status = str(head.get("status") or "")
+    v = head.get("velocity") or 0
+    if status != "travelling":
+        return status.replace("_", " ") or "unknown"
+    if v < 0:
+        return "rolling backwards (stalling on a climb)"
+    if v < 20000:
+        return "nearly stopped"
+    return "moving"
+
+
+@mcp.tool()
+def get_ride_trains_tool(ride_id: int) -> str:
+    """Where each train of a ride is right now: tile, height (tile_z), speed and state.
+
+    A train rolling backwards (negative velocity) on a climb, or sitting still
+    away from the station, is stalling: add chain lifts to the climbs just before
+    that spot (coaster_set_chain_lift_tool). Ratings that never settle after a
+    test usually mean a stall. Trains only exist while the ride is open or testing.
+    """
+    with game_context():
+        data = SESSION.ride_builder.call("getRideTrains", {"rideId": ride_id})
+        for head in data.get("heads") or []:
+            head["state"] = train_state(head)
+        return _json(data)
+
+
+@mcp.tool()
+def guest_density_tool(
+    x1: int | None = None,
+    y1: int | None = None,
+    x2: int | None = None,
+    y2: int | None = None,
+    area: str | None = None,
+    hot: int = 8,
+    warm: int = 5,
+    image: bool = True,
+) -> Any:
+    """Crowding heatmap: guests per tile and where guests think "crowded".
+
+    Default rectangle: the whole park. Returns the busiest tiles and 4x4 cells,
+    cells with the most "crowded" thoughts, and (image=true) the park map with
+    tiles of hot+ guests filled magenta and warm+ outlined orange. Fixes that worked
+    in Forest Frontiers: a second lane on the hottest corridor, a bypass parallel
+    to a path lined with ride doors, a loop so guests are not funnelled through
+    one route (crowded 59% -> 45%).
+    """
+    from openrct2_mcp.guest_density import collect_guests, density_overlays, density_summary
+
+    with game_context():
+        rect = _resolve_rect(area, x1, y1, x2, y2) if (area or None not in (x1, y1, x2, y2)) else _park_extent(0)
+        summary = density_summary(collect_guests(SESSION.ride_builder, *rect), hot=hot, warm=warm)
+        overlays = density_overlays(summary)
+        summary.pop("_per_tile")
+        summary["rect"] = list(rect)
+        if not image:
+            return _json(summary)
+        meta, img = _map_image(rect, overlays, margin=0)
+        summary["map"] = meta
+        return _json(summary), img
+
+
+@mcp.tool()
+def coaster_find_freeform_sites_tool(
+    x1: int | None = None,
+    y1: int | None = None,
+    x2: int | None = None,
+    y2: int | None = None,
+    area: str | None = None,
+    ride_type: int = 15,
+    lifts: str = "14,11",
+    budget: int = 60,
+    attempts: int = 12,
+    avoid_tight_turns: bool = True,
+    max_results: int = 10,
+) -> str:
+    """Sweep every possible station spot for coasters that can close a circuit.
+
+    A station needs the tile before it and its tiles owned, flat, level and clear
+    (trees and flower beds are fine, track removes them), with a guest path within
+    2 tiles. Each spot gets a quick generator run; spots that close are ranked.
+    In a crowded park very few close (2 of 395 in Forest Frontiers), so sweep
+    rather than guess. Then call coaster_generate_freeform_tool on the best
+    station with more attempts.
+    """
+    from openrct2_mcp.coaster_freeform import station_starts, sweep_station_sites, terrain_from_game, without_tight_turns
+
+    with game_context() as game:
+        rect = _resolve_rect(area, x1, y1, x2, y2) if (area or None not in (x1, y1, x2, y2)) else _park_extent(2)
+        terrain = terrain_from_game(game, *rect, model=SESSION.map, clear_small_scenery=True)
+        starts = station_starts(SESSION.map, *rect)
+        found = sweep_station_sites(
+            terrain, starts, ride_type=ride_type, lifts=tuple(int(v) for v in lifts.split(",") if v.strip()),
+            budget=budget, attempts=attempts, module_filter=without_tight_turns if avoid_tight_turns else None,
+        )
+        return _json({"rect": list(rect), "station_spots_checked": len(starts), "closable": len(found),
+                      "sites": found[:max_results]})
 
 
 @mcp.tool()
@@ -2744,9 +2883,21 @@ def terraform_region_tool(
 
 
 @mcp.tool()
-def buy_land_tool(x1: int, y1: int, x2: int, y2: int, construction_rights: bool = False) -> str:
-    """Purchase land or construction rights in a rectangle."""
+def buy_land_tool(
+    x1: int, y1: int, x2: int, y2: int, construction_rights: bool = False, dry_run: bool = False
+) -> str:
+    """Purchase land or construction rights in a rectangle.
+
+    dry_run=true prices the purchase with the game's own query and buys nothing.
+    Land can be expensive (about $30 a tile in Forest Frontiers); price it first.
+    """
     with game_context() as game:
+        if dry_run:
+            from openrct2_mcp.cost_estimate import price_land
+
+            quote = price_land(SESSION.ride_builder, x1, y1, x2, y2, construction_rights=construction_rights)
+            quote["park_cash"] = game.state.park_cash()
+            return _json(quote)
         ensure_paused(game)
         return _json(buy_land(game, x1, y1, x2, y2, construction_rights=construction_rights))
 
@@ -2999,11 +3150,22 @@ def coaster_generate_freeform_tool(
     station_z: int | None = None,
     allow_tunnels: bool = True,
     preview: bool = False,
+    avoid_tight_turns: bool = True,
+    clear_small_scenery: bool = True,
+    auto_chain: bool = True,
 ) -> Any:
     """Generate a wandering (non-hairpin) coaster layout inside an owned rectangle.
 
     preview=true also returns a map image with the layout's footprint in magenta
-    over the park, to check what it crosses before placing it.
+    over the park, to check what it crosses before placing it. The result includes
+    estimated_cost (the game's own price for the track). Use
+    coaster_find_freeform_sites_tool first when you don't know a good station.
+
+    avoid_tight_turns (default on) wanders with wide turns only: tight 3-tile turns
+    after a big drop made a ride rate intensity 14.8, which guests refuse.
+    clear_small_scenery lets the track pass through trees and flower beds (placing
+    track removes them). auto_chain puts chain lifts on climbs the train probably
+    cannot coast up (a 112-piece ride stalled without them).
 
     Random modules (sloped turns, drops, hops, helixes, banked turns, and loops or
     corkscrews on looping ride types) wander from a chain lift, cross over the
@@ -3016,10 +3178,16 @@ def coaster_generate_freeform_tool(
     needs clear flat ground. lift is the number of 25-degree chain pieces
     (height about 2*lift+2). budget is the wander length in pieces.
     """
-    from openrct2_mcp.coaster_freeform import generate, render_ascii, terrain_from_game
+    from openrct2_mcp.coaster_freeform import (
+        auto_chain_climbs,
+        generate,
+        render_ascii,
+        terrain_from_game,
+        without_tight_turns,
+    )
 
     with game_context() as game:
-        terrain = terrain_from_game(game, x1, y1, x2, y2, model=SESSION.map)
+        terrain = terrain_from_game(game, x1, y1, x2, y2, model=SESSION.map, clear_small_scenery=clear_small_scenery)
         terrain.allow_tunnels = allow_tunnels
         if station_z is None:
             station_z = terrain.ground.get((station_x, station_y), 12)
@@ -3031,6 +3199,7 @@ def coaster_generate_freeform_tool(
             budget=budget,
             attempts=attempts,
             seed=seed,
+            module_filter=without_tight_turns if avoid_tight_turns else None,
         )
         if result is None:
             return _json({
@@ -3040,7 +3209,19 @@ def coaster_generate_freeform_tool(
                 "owned_tiles": len(terrain.ground),
             })
         result["ok"] = True
+        if auto_chain:
+            result["design"], chained, unfixable = auto_chain_climbs(result["design"])
+            result["auto_chained_pieces"] = chained
+            if unfixable:
+                result["low_momentum_curved_climbs"] = unfixable
         result["height_map"] = render_ascii(result["design"])
+        try:
+            from openrct2_mcp.cost_estimate import price_design
+
+            result["estimated_cost"] = price_design(game, SESSION.ride_builder, result["design"])
+            result["park_cash"] = game.state.park_cash()
+        except Exception as exc:  # noqa: BLE001 - the layout is still useful without a price
+            result["estimated_cost"] = {"error": str(exc)[:160]}
         if preview:
             from openrct2_mcp.map_render import overlay_from_design, overlay_from_tiles
 
@@ -3063,8 +3244,11 @@ def coaster_fit_design_tool(
     test: bool = True,
     save_as: str = "",
     excavate: bool = False,
+    dry_run: bool = False,
 ) -> str:
     """Fit-and-fix pipeline: lint -> in-game probe -> place + entrance/exit -> test ride.
+    dry_run=true only lints and prices the design at the target (the game's own
+    cost query, nothing is built): run it first and compare with park cash.
     Fails fast with structured per-stage feedback for iterative design fixes.
     Track errors are translated (status 2 = not allowed for this ride/piece,
     9 = land surface in the way).
@@ -3076,6 +3260,16 @@ def coaster_fit_design_tool(
 
     design = json.loads(design_json)
     envelope = json.loads(envelope_json) if envelope_json else None
+    if dry_run:
+        from openrct2_mcp.cost_estimate import price_design
+        from openrct2_mcp.design_lint import lint_design
+
+        with game_context() as game:
+            target = {"x": tile_x, "y": tile_y, "z": tile_z, "direction": direction}
+            lint = lint_design(dict(design, origin=target), envelope)
+            quote = price_design(game, SESSION.ride_builder, design, origin=target)
+            return _json({"dry_run": True, "lint_ok": lint.get("ok"), "lint_errors": lint.get("errors", [])[:5],
+                          "price": quote, "park_cash": game.state.park_cash()})
     with game_context() as game:
         result = fit_coaster_design(
             game,

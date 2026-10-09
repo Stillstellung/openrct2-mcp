@@ -105,6 +105,16 @@ CLOSE_MODULES: list[Module] = [
 
 LOOPING_RIDE_TYPES = {15, 19, 51, 52, 65}  # looping, corkscrew, twister-style types
 
+# 3-tile quarter turns (flat and banked). Taken at speed they throw riders sideways:
+# a 31-high drop straight into two of them rated intensity 14.8 (guests refuse
+# above about 10). The closer may still use them near the station, where it is slow.
+TIGHT_TURN_MODULES = frozenset({"turn_l", "turn_r", "bank_turn_l", "bank_turn_r"})
+
+
+def without_tight_turns(module: Module) -> bool:
+    """module_filter for generate(): wander with wide turns, helixes and inversions only."""
+    return module.name not in TIGHT_TURN_MODULES
+
 
 @dataclass
 class Terrain:
@@ -450,15 +460,19 @@ def terrain_from_game(
     fly_over_paths: bool = True,
     ride_id: int | None = None,
     model: Any = None,
+    clear_small_scenery: bool = False,
 ) -> Terrain:
     """Terrain mask for an owned rectangle: ground z per owned tile, obstacle tops.
 
     Paths, scenery and other rides become obstacles the track may fly over (base
     above their top) but not touch. Unowned tiles are excluded. With a map model
     (openrct2_mcp.map_model) the rectangle is read from the cache in one go.
+    clear_small_scenery (model only): trees and flower beds are not obstacles,
+    because placing track removes them (for a small fee).
     """
     if model is not None:
-        return terrain_from_model(model, x1, y1, x2, y2, fly_over_paths=fly_over_paths, ride_id=ride_id)
+        return terrain_from_model(model, x1, y1, x2, y2, fly_over_paths=fly_over_paths, ride_id=ride_id,
+                                  clear_small_scenery=clear_small_scenery)
     ground: dict[tuple[int, int], int] = {}
     tops: dict[tuple[int, int], int] = {}
     for x in range(x1, x2 + 1):
@@ -503,6 +517,7 @@ def terrain_from_model(
     *,
     fly_over_paths: bool = True,
     ride_id: int | None = None,
+    clear_small_scenery: bool = False,
 ) -> Terrain:
     """terrain_from_game, read from the cached map model."""
     ground: dict[tuple[int, int], int] = {}
@@ -515,9 +530,11 @@ def terrain_from_model(
         if t.paths and not fly_over_paths:
             tops[(t.x, t.y)] = 255
             continue
-        if ride_id is not None and any(tr.ride == ride_id for tr in t.track):
+        own_track = ride_id is not None and any(tr.ride == ride_id for tr in t.track)
+        if own_track or (clear_small_scenery and t.scenery):
+            # Rebuild the top from the pieces that really block track.
             parts = [tr.top for tr in t.track if tr.ride != ride_id]
-            parts += [s.top for s in t.scenery]
+            parts += [s.top for s in t.scenery if not (clear_small_scenery and s.kind == "small")]
             parts += [p.z + PATH_CLEARANCE_Z + (2 if p.slope_direction is not None else 0) for p in t.paths]
             parts += [e.z + ENTRANCE_CLEARANCE_Z for e in t.entrances if e.ride != ride_id]
             if parts:
@@ -549,3 +566,154 @@ def render_ascii(design: dict[str, Any]) -> list[str]:
         )
     rows.append(f"x from {min(xs)}")
     return rows
+
+
+# ---- momentum check: chain climbs the train cannot coast up -------------------
+
+# Calibrated on Grizzly Gauntlet (stalled rolling back at piece 91, estimated
+# margin 0.5, after passing piece 59 at 2.2) and the validated designs in
+# designs/coasters (all clear except a final climb or two into the station).
+MOMENTUM_FRICTION = 0.25  # tile_z of speed head lost per unchained piece
+MOMENTUM_INVERSION_LOSS = 1.0  # extra loss per inverting piece
+MOMENTUM_MARGIN = 1.5  # head (tile_z) a climb must keep at its end
+INVERTING_TRACK = frozenset({40, 41, 58, 59, 60, 61})
+# Straight climbs and flats can carry a chain; curved climbs cannot.
+CHAINABLE_TRACK = frozenset({0, 4, 5, 6, 7, 8, 9})
+
+
+def momentum_profile(
+    design: dict[str, Any],
+    *,
+    friction: float = MOMENTUM_FRICTION,
+    inversion_loss: float = MOMENTUM_INVERSION_LOSS,
+) -> list[dict[str, Any]]:
+    """Estimated speed head (tile_z) at the end of each piece.
+
+    Energy is measured from the last chain crest; each unchained piece loses
+    ``friction`` and each inverting piece ``inversion_loss`` more. Negative head on a
+    climb means the train probably rolls back there.
+    """
+    segments = load_segments()
+    from openrct2_mcp.design_lint import simulate_design
+
+    states = simulate_design(design)["states"]
+    out = []
+    ref = None
+    since = 0
+    inversions = 0
+    for s in states:
+        seg = segments[int(s["track_type"])]
+        dz = (int(seg["endZ"]) - int(seg["beginZ"])) // 8
+        z0 = int(s["entry_z"])
+        z1 = z0 + dz
+        if ref is None:
+            ref = z0
+        if s["chain"]:
+            level = ref - friction * since - inversion_loss * inversions
+            if z1 > level:
+                ref, since, inversions = z1, 0, 0
+            out.append({"index": s["index"], "track_type": s["track_type"], "dz": dz, "z_end": z1, "head": None, "chain": True})
+            continue
+        since += 1
+        inversions += int(s["track_type"]) in INVERTING_TRACK
+        head = ref - friction * since - inversion_loss * inversions - z1
+        out.append({"index": s["index"], "track_type": s["track_type"], "dz": dz, "z_end": z1, "head": round(head, 2), "chain": False})
+    return out
+
+
+def auto_chain_climbs(
+    design: dict[str, Any],
+    *,
+    margin: float = MOMENTUM_MARGIN,
+    friction: float = MOMENTUM_FRICTION,
+    inversion_loss: float = MOMENTUM_INVERSION_LOSS,
+) -> tuple[dict[str, Any], list[int], list[int]]:
+    """Put chain lifts on climbs the train probably cannot coast up.
+
+    Each low climb gets a chain, plus the flats leading into it (a train that
+    stops on a flat before a chain is stuck). Returns (design, chained piece
+    indices, low climbs that cannot carry a chain, e.g. curved climbs).
+    """
+    import copy
+
+    design = copy.deepcopy(design)
+    pieces = design["pieces"]
+    chained: list[int] = []
+    unfixable: list[int] = []
+    for _ in range(len(pieces)):
+        low = next(
+            (p for p in momentum_profile(design, friction=friction, inversion_loss=inversion_loss)
+             if not p["chain"] and p["dz"] > 0 and p["head"] < margin and p["index"] not in unfixable),
+            None,
+        )
+        if low is None:
+            break
+        i = low["index"]
+        if int(pieces[i]["track_type"]) not in CHAINABLE_TRACK:
+            unfixable.append(i)
+            continue
+        pieces[i]["has_chain_lift"] = True
+        chained.append(i)
+        j = i - 1
+        while j >= 0 and int(pieces[j]["track_type"]) == 0 and not pieces[j].get("has_chain_lift"):
+            pieces[j]["has_chain_lift"] = True
+            chained.append(j)
+            j -= 1
+    return design, sorted(chained), unfixable
+
+
+# ---- station sweep ----------------------------------------------------------------
+
+
+def station_starts(model: Any, x1: int, y1: int, x2: int, y2: int, *, station_len: int = 5,
+                   path_within: int = 2) -> list[tuple[int, int, int, int]]:
+    """(x, y, z, direction) BeginStation spots: the station tiles and the tile before
+    them owned, flat, level and clear (small scenery allowed, it is removed), with a
+    regular guest path within ``path_within`` tiles for the entrance and exit."""
+    tiles = model.rect(x1, y1, x2, y2)
+
+    def clear(t) -> bool:
+        return (t is not None and t.owned and t.flat and not t.underwater and not (t.paths or t.track or t.entrances)
+                and all(sc.kind == "small" for sc in t.scenery))
+
+    out = []
+    for (x, y), t in tiles.items():
+        for d, (dx, dy) in DIR_DELTA.items():
+            run = [(x + dx * i, y + dy * i) for i in range(-1, station_len)]
+            if not all(clear(tiles.get(p)) for p in run) or len({tiles[p].ground for p in run}) != 1:
+                continue
+            near = {(px + sx, py + sy) for px, py in run[1:] for sx in range(-path_within, path_within + 1)
+                    for sy in range(-path_within, path_within + 1)}
+            if any(tiles.get(p) is not None and tiles[p].paths and not tiles[p].queue for p in near):
+                out.append((x, y, t.ground, d))
+    return out
+
+
+def sweep_station_sites(
+    terrain: Terrain,
+    starts: list[tuple[int, int, int, int]],
+    *,
+    ride_type: int = 15,
+    lifts: tuple[int, ...] = (14, 11),
+    budget: int = 60,
+    attempts: int = 12,
+    module_filter: Callable[[Module], bool] | None = None,
+    seed: int = 1,
+) -> list[dict[str, Any]]:
+    """Quick generate() from every start; the ones that close a circuit, best first.
+
+    Failing starts cost milliseconds, so a whole park sweeps in seconds. Re-run
+    generate() on the winners with more attempts for the final layout.
+    """
+    found = []
+    for x, y, z, d in starts:
+        for lift in lifts:
+            res = generate(origin=(x, y, z, d), terrain=terrain, ride_type=ride_type, lift=lift, budget=budget,
+                           attempts=attempts, seed=seed, module_filter=module_filter)
+            if res:
+                st = res["stats"]
+                found.append({"station": [x, y, z, d], "lift": lift, "score": res["score"],
+                              "stats": {k: st[k] for k in ("pieces", "inversions", "drops", "turns", "footprint_tiles", "lift_height")}})
+                break
+    found.sort(key=lambda f: -f["score"])
+    return found
