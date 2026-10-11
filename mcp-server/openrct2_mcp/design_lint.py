@@ -26,6 +26,27 @@ STATION_TYPES = {TRACK_BEGIN_STATION, TRACK_MIDDLE_STATION, TRACK_END_STATION}
 
 DEFAULT_MIN_STATION_PIECES = 5
 
+# Track rides whose vehicles drive themselves (car ride, trains, monorails, boats,
+# go-karts, chairlift...) or climb on built-in conveyors (log flume, river rapids):
+# no chain lift before the first drop, and short stations are normal (RCT2's own
+# car-ride and log-flume designs use two station pieces).
+POWERED_RIDE_TYPES = {
+    5,  # miniature railway
+    6,  # monorail
+    8,  # boat hire
+    11,  # car ride
+    18,  # chairlift
+    22,  # go-karts
+    23,  # log flume
+    24,  # river rapids
+    50,  # ghost train
+    61,  # mini helicopters
+    63,  # suspended monorail
+    72,  # monorail cycles
+    78,  # submarine ride
+    79,  # river rafts
+}
+
 # OpenRCT2 map directions: 0=west(-x), 1=north(+y), 2=east(+x), 3=south(-y).
 DIR_DELTA = {0: (-1, 0), 1: (0, 1), 2: (1, 0), 3: (0, -1)}
 
@@ -159,15 +180,29 @@ def simulate_design(design: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _ride_type(design: dict[str, Any]) -> int | None:
+    try:
+        return int(design.get("ride_type"))
+    except (TypeError, ValueError):
+        return None
+
+
 def lint_design(
     design: dict[str, Any],
     envelope: dict[str, Any] | None = None,
     *,
-    min_station_pieces: int = DEFAULT_MIN_STATION_PIECES,
+    min_station_pieces: int | None = None,
 ) -> dict[str, Any]:
-    """Validate a DesignSpec offline. Returns {ok, errors, warnings, stats, endpoint}."""
+    """Validate a DesignSpec offline. Returns {ok, errors, warnings, stats, endpoint}.
+
+    Coaster rules (chain lift to the first peak, a 5-piece station) are skipped for
+    ``POWERED_RIDE_TYPES``; ``min_station_pieces`` overrides the station rule.
+    """
     segments = load_segments()
     pieces = design.get("pieces") or []
+    powered = _ride_type(design) in POWERED_RIDE_TYPES
+    if min_station_pieces is None:
+        min_station_pieces = 1 if powered else DEFAULT_MIN_STATION_PIECES
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
 
@@ -215,7 +250,7 @@ def lint_design(
         if seg and seg.get("slopeDirection") == "down":
             first_down_index = st["index"]
             break
-    for st in states:
+    for st in [] if powered else states:
         seg = segments.get(st["track_type"])
         if not seg:
             continue

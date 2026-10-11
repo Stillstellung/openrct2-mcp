@@ -334,6 +334,78 @@ def place_flat_ride_or_clean_up(game: RCT2, ride_builder: RideBuilderClient | No
         raise
 
 
+STATION_TRACK_TYPES = {1, 2, 3}  # EndStation, BeginStation, MiddleStation
+# A door stores the direction of its station neighbour (0 = -x, 1 = +y, 2 = +x, 3 = -y).
+_FACING_NEIGHBOUR = {(-1, 0): 0, (0, 1): 1, (1, 0): 2, (0, -1): 3}
+
+
+def _door_facing(game: RCT2, ride_id: int, x: int, y: int) -> tuple[int, int]:
+    """(direction, station index) for a door at (x, y), which must touch one of the ride's station pieces."""
+    from pyrct2.world._tile import Tile
+
+    for (dx, dy), direction in _FACING_NEIGHBOUR.items():
+        for elem in game.world.get_tile(Tile(x + dx, y + dy)).elements:
+            if (
+                getattr(elem, "type", None) == "track"
+                and getattr(elem, "ride", None) == ride_id
+                and getattr(elem, "trackType", None) in STATION_TRACK_TYPES
+            ):
+                return direction, int(getattr(elem, "station", 0) or 0)
+    raise ValueError(f"({x},{y}) is not beside a station piece of ride {ride_id}")
+
+
+def move_ride_doors(
+    game: RCT2,
+    ride_id: int,
+    *,
+    entrance: tuple[int, int] | None = None,
+    exit: tuple[int, int] | None = None,
+) -> dict[str, Any]:
+    """Move a ride's entrance and/or exit beside its station, facing it; reopen if it was open.
+
+    If placing a door fails, the old one is put back before the error is raised.
+    """
+    from pyrct2._generated.enums import Direction
+
+    raw = get_ride_raw(game, ride_id)
+    if raw is None:
+        raise ValueError(f"Ride {ride_id} not found")
+    plan = [(tile, is_exit, key) for tile, is_exit, key in ((entrance, False, "entrance"), (exit, True, "exit")) if tile]
+    if not plan:
+        raise ValueError("pass an entrance and/or exit tile")
+    facings = {key: _door_facing(game, ride_id, *tile) for tile, _, key in plan}
+    was_open = ride_status_is_open(raw.get("status"))
+    stations = raw.get("stations") or []
+    game.actions.ride_set_status(ride=ride_id, status=RideStatus.CLOSED)
+    moved: list[dict[str, Any]] = []
+    for tile, is_exit, key in plan:
+        direction, station = facings[key]
+        old = (stations[station] if station < len(stations) else {}).get(key)
+        if old:
+            game.actions.ride_entrance_exit_remove(x=old["x"], y=old["y"], ride=ride_id, station=station, is_exit=is_exit)
+        try:
+            game.actions.ride_entrance_exit_place(
+                x=tile[0] * 32, y=tile[1] * 32, direction=Direction(direction), ride=ride_id, station=station, is_exit=is_exit
+            )
+        except ActionError:
+            if old:
+                game.actions.ride_entrance_exit_place(
+                    x=old["x"], y=old["y"], direction=Direction(int(old.get("direction", 0))),
+                    ride=ride_id, station=station, is_exit=is_exit,
+                )
+            raise
+        moved.append({
+            "door": key,
+            "tile": list(tile),
+            "facing": direction,
+            "station": station,
+            "from": [old["x"] // 32, old["y"] // 32] if old else None,
+        })
+    if was_open:
+        game.actions.ride_set_status(ride=ride_id, status=RideStatus.OPEN)
+    return {"ride_id": ride_id, "moved": moved, "reopened": was_open}
+
+
 def ride_status_is_open(status: object) -> bool:
     """Return True when bridge/pyrct2 status indicates the ride is open."""
     label = str(status or "").lower()
@@ -382,9 +454,18 @@ def _execute_refurbish(game: RCT2, ride_id: int) -> ActionResult:
     )
 
 
+def refurbish_not_needed(exc: ActionError) -> bool:
+    """True for OpenRCT2's "Ride doesn't need refurbishing" refusal.
+
+    The game only renews rides that have been open and can break down, so rides
+    with no breakdowns (e.g. mazes) can never be refurbished.
+    """
+    return "need" in str(exc.message or "").lower() and "refurbish" in str(exc.message or "").lower()
+
+
 def refurbish_blocked_by_guests(exc: ActionError) -> bool:
     """True when refurbish failed because guests/vehicles are still on the ride."""
-    if exc.status == ActionStatus.INSUFFICIENT_FUNDS:
+    if exc.status == ActionStatus.INSUFFICIENT_FUNDS or refurbish_not_needed(exc):
         return False
     message = str(exc.message or "").lower()
     return exc.status == ActionStatus.DISALLOWED or "empty" in message
@@ -444,6 +525,12 @@ def refurbish_ride(
         try:
             return _execute_refurbish(game, ride_id)
         except ActionError as exc:
+            if refurbish_not_needed(exc):
+                raise ValueError(
+                    f"Ride {ride_id} doesn't need refurbishing: OpenRCT2 only renews rides that have "
+                    "been open and can break down (mazes and other breakdown-free rides never qualify). "
+                    "Reopen it with open_ride."
+                ) from exc
             if exc.status == ActionStatus.NOT_CLOSED and close_first:
                 _close_ride(game, ride_id)
                 if "closed" not in steps:

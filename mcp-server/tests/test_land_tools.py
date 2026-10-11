@@ -95,8 +95,6 @@ class FindOpenLandTests(unittest.TestCase):
                 self.assertFalse(overlap, (a["origin"], b["origin"]))
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 def test_terraform_dry_run_prices_without_changing():
@@ -116,3 +114,45 @@ def test_terraform_dry_run_prices_without_changing():
     out = terraform_region(game, 0, 0, 1, 1, flatten=True, dry_run=True, ride_builder=RB())
     assert out["target_height"] == 12 and out["estimated_cost"] == 510
     assert out["blocked"] == 1 and out["blocked_sample"][0]["error"] == "not_owned"
+
+
+class OwnershipCharTests(unittest.TestCase):
+    def test_plugin_values(self):
+        from openrct2_mcp.land_tools import ownership_char
+
+        self.assertEqual(ownership_char(2), "O")
+        self.assertEqual(ownership_char(8), "$")
+        self.assertEqual(ownership_char(4), "c")
+        self.assertEqual(ownership_char(1), "r")
+        self.assertEqual(ownership_char(0), ".")
+        self.assertEqual(ownership_char(None), ".")
+
+    def test_raw_game_byte(self):
+        from openrct2_mcp.land_tools import ownership_char
+
+        self.assertEqual(ownership_char(0x20), "O")
+        self.assertEqual(ownership_char(0x80), "$")
+
+
+class RelayGroundPathsTests(unittest.TestCase):
+    def test_sloped_or_misplaced_paths_are_relaid_flat(self):
+        from unittest import mock
+
+        from openrct2_mcp import land_tools, path_build
+
+        paths = {
+            (1, 1): (12, True, False),   # sloped path on flattened land: re-lay
+            (2, 1): (12, False, False),  # flat but buried 2 under the raised ground: re-lay
+            (3, 1): (14, False, True),   # already right: leave
+            (4, 1): (12, True, False),   # its land failed to change: leave
+        }
+        with mock.patch.object(path_build, "remove_paths_at") as remove, mock.patch.object(path_build, "place_path_at") as place:
+            relaid, failed = land_tools._relay_ground_paths(object(), paths, 14, {(4, 1)})
+        self.assertEqual(relaid, [[1, 1], [2, 1]])
+        self.assertEqual(failed, [])
+        remove.assert_any_call(mock.ANY, 1, 1, 12)
+        place.assert_any_call(mock.ANY, 2, 1, 14, queue=False)
+
+
+if __name__ == "__main__":
+    unittest.main()

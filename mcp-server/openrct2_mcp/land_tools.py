@@ -70,6 +70,7 @@ def terraform_region(
         }
 
     start_cash = game.state.park_cash()
+    ground_paths = _ground_paths(game, tiles) if target_height is not None else {}
     changed, failed = 0, []
     for tx, ty in tiles:
         try:
@@ -80,7 +81,8 @@ def terraform_region(
             changed += 1
         except Exception as exc:  # noqa: BLE001 - report and continue
             failed.append({"tile": [tx, ty], "error": str(exc)[:100]})
-    return {
+    relinked, relink_failed = _relay_ground_paths(game, ground_paths, target_height, {tuple(f["tile"]) for f in failed})
+    result = {
         "terraformed_tiles": changed,
         "failed": len(failed),
         "failed_sample": failed[:10],
@@ -88,6 +90,53 @@ def terraform_region(
         "target_height": target_height,
         "spent": start_cash - game.state.park_cash(),
     }
+    if relinked or relink_failed:
+        result["relaid_paths"] = relinked
+        result["relay_failed"] = relink_failed[:10]
+    return result
+
+
+def _ground_paths(game: RCT2, tiles: list[tuple[int, int]]) -> dict[tuple[int, int], tuple[int, bool, bool]]:
+    """Ground-level footpaths on the tiles: tile -> (tile_z, sloped, queue). Bridges and tunnels are left out."""
+    out: dict[tuple[int, int], tuple[int, bool, bool]] = {}
+    for tx, ty in tiles:
+        elements = raw_tile(game, tx, ty).get("elements", [])
+        surface = next((e for e in elements if e.get("type") == "surface"), None)
+        if surface is None:
+            continue
+        ground = int(surface.get("baseZ", 0)) // 8
+        for el in elements:
+            z = int(el.get("baseZ", 0)) // 8
+            if el.get("type") == "footpath" and abs(z - ground) <= 2:
+                out[(tx, ty)] = (z, el.get("slopeDirection") is not None, bool(el.get("isQueue")))
+    return out
+
+
+def _relay_ground_paths(
+    game: RCT2,
+    ground_paths: dict[tuple[int, int], tuple[int, bool, bool]],
+    target_height: int | None,
+    skip: set[tuple[int, int]],
+) -> tuple[list[list[int]], list[dict[str, Any]]]:
+    """Re-lay paths whose land was flattened under them as flat paths at the new height.
+
+    Setting the land height leaves a path element at its old height and slope, so it
+    stops joining its neighbours (a sloped path only links along its slope).
+    """
+    from openrct2_mcp.path_build import place_path_at, remove_paths_at
+
+    relaid: list[list[int]] = []
+    failed: list[dict[str, Any]] = []
+    for (tx, ty), (z, sloped, queue) in ground_paths.items():
+        if target_height is None or (tx, ty) in skip or (z == target_height and not sloped):
+            continue
+        try:
+            remove_paths_at(game, tx, ty, z)
+            place_path_at(game, tx, ty, target_height, queue=queue)
+            relaid.append([tx, ty])
+        except Exception as exc:  # noqa: BLE001 - report and continue
+            failed.append({"tile": [tx, ty], "error": str(exc)[:100]})
+    return relaid, failed
 
 
 def buy_land(game: RCT2, x1: int, y1: int, x2: int, y2: int, *, construction_rights: bool = False) -> dict:
@@ -100,6 +149,58 @@ def buy_land(game: RCT2, x1: int, y1: int, x2: int, y2: int, *, construction_rig
         setting=setting,
     )
     return {"bought": True, "construction_rights": construction_rights}
+
+
+# Plugin SurfaceElement.ownership is the game's ownership byte shifted down 4 bits.
+_RIGHTS_OWNED, _LAND_OWNED, _RIGHTS_FOR_SALE, _LAND_FOR_SALE = 1, 2, 4, 8
+OWNERSHIP_LEGEND = (
+    "O owned, $ land for sale, c construction rights for sale, r construction rights owned, . not for sale"
+)
+
+
+def ownership_char(ownership: Any) -> str:
+    """One map character for a surface's ownership value (plugin or raw OpenRCT2 byte)."""
+    value = int(ownership or 0)
+    if value > 0x0F:  # raw OWNERSHIP_* byte
+        value >>= 4
+    if value & _LAND_OWNED:
+        return "O"
+    if value & _LAND_FOR_SALE:
+        return "$"
+    if value & _RIGHTS_FOR_SALE:
+        return "c"
+    if value & _RIGHTS_OWNED:
+        return "r"
+    return "."
+
+
+def land_ownership_map(game: RCT2, x1: int, y1: int, x2: int, y2: int) -> dict[str, Any]:
+    """ASCII map of who owns each tile and what is for sale, with the park's prices.
+
+    Unowned land is not all for sale: scenarios mark which tiles can be bought, and
+    the land window only shows them while it is open. Rows run y1 -> y2, columns x1 -> x2.
+    """
+    x1, x2 = sorted((x1, x2))
+    y1, y2 = sorted((y1, y2))
+    chars: dict[tuple[int, int], str] = {}
+    for tile in tiles_in(game, x1, y1, x2, y2):
+        chars[(tile.x, tile.y)] = ownership_char(getattr(tile.surface, "ownership", 0))
+    rows = ["".join(chars.get((x, y), "?") for x in range(x1, x2 + 1)) for y in range(y1, y2 + 1)]
+    counts = {name: sum(row.count(ch) for row in rows) for ch, name in (
+        ("O", "owned"), ("$", "land_for_sale"), ("c", "rights_for_sale"), ("r", "rights_owned"), (".", "not_for_sale"),
+    )}
+    land_price = int(game.state.park_land_price())
+    rights_price = int(game.state.park_construction_rights_price())
+    return {
+        "bbox": [x1, y1, x2, y2],
+        "rows": rows,
+        "legend": OWNERSHIP_LEGEND,
+        "counts": counts,
+        "land_price_per_tile": land_price,
+        "rights_price_per_tile": rights_price,
+        "all_for_sale_cost": counts["land_for_sale"] * land_price + counts["rights_for_sale"] * rights_price,
+        "note": "prices in money units ($1 = 10); buy with buy_land_tool (dry_run=true first)",
+    }
 
 
 def sell_land(game: RCT2, x1: int, y1: int, x2: int, y2: int) -> dict:

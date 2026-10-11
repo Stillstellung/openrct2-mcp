@@ -1140,6 +1140,33 @@ def set_ride_price(ride_id: int, price: int, primary: bool = True) -> str:
 
 
 @mcp.tool()
+def move_ride_doors_tool(
+    ride_id: int,
+    entrance_x: int | None = None,
+    entrance_y: int | None = None,
+    exit_x: int | None = None,
+    exit_y: int | None = None,
+) -> str:
+    """Move a ride's entrance and/or exit to new tiles beside its station.
+
+    For when automatic placement put a door where guests can't reach it (inside the
+    track loop, or facing a raised gap). Each new tile must touch one of the ride's
+    station pieces; the door is turned to face it and the ride reopens if it was open.
+    find_design_site_tool reports reachable door tiles for a site. Lay a path to each
+    door's outer side afterwards (get_ride_location_tool shows the guest side).
+    """
+    from openrct2_mcp.ride_ops import move_ride_doors
+
+    entrance = (entrance_x, entrance_y) if entrance_x is not None and entrance_y is not None else None
+    exit_tile = (exit_x, exit_y) if exit_x is not None and exit_y is not None else None
+    with game_context() as game:
+        ensure_paused(game)
+        result = move_ride_doors(game, ride_id, entrance=entrance, exit=exit_tile)
+        log_action("move_ride_doors", {"ride_id": ride_id, "entrance": entrance, "exit": exit_tile})
+        return _json(result)
+
+
+@mcp.tool()
 def open_ride(ride_id: int) -> str:
     """Open a ride for guests."""
     with game_context() as game:
@@ -2911,6 +2938,27 @@ def buy_land_tool(
 
 
 @mcp.tool()
+def land_ownership_map_tool(
+    x1: int | None = None, y1: int | None = None, x2: int | None = None, y2: int | None = None
+) -> str:
+    """Which tiles the park owns and which unowned land or construction rights are for sale.
+
+    Not every unowned tile can be bought: the scenario marks the purchasable ones.
+    Returns an ASCII map (O owned, $ land for sale, c construction rights for sale,
+    r rights owned, . not for sale), counts, and the park's price per tile, so you can
+    pick an expansion block before pricing it with buy_land_tool(dry_run=true).
+    Omit the rectangle for the whole map.
+    """
+    from openrct2_mcp.land_tools import land_ownership_map
+
+    with game_context() as game:
+        if None in (x1, y1, x2, y2):
+            bounds = get_map_bounds(game)
+            x1, y1, x2, y2 = 0, 0, bounds["max_x"], bounds["max_y"]
+        return _json(land_ownership_map(game, x1, y1, x2, y2))
+
+
+@mcp.tool()
 def sell_land_tool(x1: int, y1: int, x2: int, y2: int) -> str:
     """Sell land in a rectangle."""
     with game_context() as game:
@@ -3139,6 +3187,45 @@ def coaster_site_envelope_tool(center_x: int, center_y: int, radius: int = 20) -
 
     with game_context() as game:
         return _json(build_site_envelope(game, center_x, center_y, radius=radius))
+
+
+@mcp.tool()
+def find_design_site_tool(
+    center_x: int,
+    center_y: int,
+    radius: int = 15,
+    design_name: str = "",
+    design_json: str = "",
+    ride_type: int | None = None,
+    max_results: int = 8,
+) -> str:
+    """Where a bundled TD6 design (design_name) or a DesignSpec (design_json) fits near a tile.
+
+    Tries every origin and direction in the radius offline: track stays on owned
+    land and clears paths, track and water by height; the station sits on flat
+    ground; and two station side tiles can take an entrance and exit whose front
+    tiles reach an existing guest path without crossing the ride (so guests can
+    get in). ride_type overrides the design's (e.g. 99 for a type-52 wooden design
+    on the classic wooden coaster). Each site lists tile_x/tile_y/tile_z/direction
+    for coaster_fit_design_tool, the doors, path tiles to lay, scenery tiles to
+    clear (clear_area_tool) and dig_tiles (needs excavate=true).
+    """
+    from openrct2_mcp.coaster_site_envelope import build_site_envelope
+    from openrct2_mcp.design_site_search import search_design_sites
+    from openrct2_mcp.td6_reader import load_td6_design, td6_to_design_spec
+
+    if design_json:
+        design = json.loads(design_json)
+    elif design_name:
+        design = td6_to_design_spec(load_td6_design(design_name, None))
+    else:
+        raise ValueError("pass design_name (a bundled TD6 design) or design_json (a DesignSpec)")
+    if ride_type is not None:
+        design["ride_type"] = ride_type
+    with game_context() as game:
+        envelope = build_site_envelope(game, center_x, center_y, radius=radius)
+    result = search_design_sites(design, envelope, max_results=max_results)
+    return _json({"design": design.get("name"), "ride_type": design.get("ride_type"), "bbox": envelope["bbox"], **result})
 
 
 @mcp.tool()

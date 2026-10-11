@@ -61,9 +61,10 @@ General lessons from a full playthrough (details in `docs/playthrough-forest-fro
   week for $50/week), free entry 400 (25 a week, but only if the entry fee is $4+), half-price entry 200
   (needs $6+), free food/drink 200, `PARK` 250 ($350/week), `RIDE` 200 ($200/week). Campaigns are paid
   up front
-- **Any loaded ride can be built regardless of research**, including "uninvented" ones (Ferris wheel,
-  bumper cars, Top Spin were placed with research funding NONE). Set research to NONE and spend the
-  money on rides. `place_ride_at_best_tile_tool` needs a 5x5 open site (6x6 for stalls, so use
+- **Fair play when the user asks to beat a scenario**: build only invented rides and stalls (check
+  `get_research`), keep research funded, and build each ride type about once (no ten merry-go-rounds).
+  The tools can place uninvented loaded rides, and Bumbly Beach was won that way with research off,
+  but that is not how the user wants scenarios beaten. `place_ride_at_best_tile_tool` needs a 5x5 open site (6x6 for stalls, so use
   `place_stall`); once land is used up place rides with `place_flat_ride` (tile = centre of the 3x3
   footprint, doors on the column beside it facing a path) and check `list_ride_locations_tool(only_issues=true)`
 - One 4-week `PARK` campaign early took guests from 130 to 230 in two weeks. After that natural
@@ -103,6 +104,20 @@ General lessons from a full playthrough (details in `docs/playthrough-forest-fro
 - `refurbish_ride_tool` resets age, so value and the price guests accept recover: Top Spins
   $203, Big Dipper $3,187
 
+**Leafy Lake (500 guests by year 3 from an empty park; won fair, 1,006 guests and rating 835)**
+- Researched rides only, one of each: 6 flat rides, maze, car ride, 3 coasters (classic mini oval,
+  wooden Whitewash, looping Bumble Bee) and a log flume (Splash Mine) as research delivered them. 564 guests by
+  month 6; the cap of about 840 held it near 1,000 for the last year
+- **Pro designs (`list_premade_track_designs_tool`) beat hand-built track** and convert across close
+  ride types: Whitewash (type 52) built as the classic wooden coaster (99) with every piece accepted.
+  Many dip below their station; `find_design_site_tool` with a station raise (Whitewash +4, Bumble Bee
+  +6, Splash Mine +6) places them without digging, and the doors then need short ramps
+- **Expand into for-sale land**: `land_ownership_map_tool` shows which unowned tiles can be bought
+  (most cannot); price a block with `buy_land_tool(dry_run=true)` (land was $90 a tile here)
+- Entry fee $5 -> $10 -> $15 as `park.totalRideValueForMoney` rose; free-entry vouchers then count
+- Research at maximum delivered a new ride type about every month; refurbishing a ride with no
+  breakdown types (maze) is refused as "doesn't need refurbishing"
+
 **Fast-forwarding a long run**
 - `advance_time(16384)` is one game month and took about 55 s wall clock; 24 months is about 20 minutes
 - Run the poller in the background while the clock moves:
@@ -114,8 +129,11 @@ General lessons from a full playthrough (details in `docs/playthrough-forest-fro
 - Scripts must connect with `open_bridge()` (what `park_watch.py` uses), **not `SESSION.game`**:
   SESSION pauses the game on connect, which strands a running `advance_time` (the next one then
   fails with `already_in_progress` until the game is unpaused)
-- Delegate read-only analysis (crowd-relief path plans) to a subagent while the clock runs; tell it
-  explicitly not to build or advance time. Avoid `list_rides` and `park_health_report_tool` for
+- **One agent owns the clock and every change**: any build tool pauses the game, which stalls a
+  running `advance_time`. Numbers come from `park_watch.py` (free). Delegate judgment to read-only
+  subagents told not to build, advance time or run game scripts: a design scout (pro design + site +
+  dry-run price for the first wooden coaster) took 20 minutes and 77 tool calls and handed back a
+  one-call placement, or crowd-relief path plans. Avoid `list_rides` and `park_health_report_tool` for
   routine checks (huge output); use `get_ride`, `list_refurbish_candidates_tool` or a small script
 
 **Other levers**
@@ -244,6 +262,23 @@ Use when the user wants a **custom** coaster designed to their prompt (not a pro
 | 6 | FlatToUp25 | +1 | 16/17 | large left/right turn (5-tile, flat) | 0 |
 
 Full vocabulary: `coaster_list_track_segments_tool` (or `data/track_segments.json`).
+
+### Placing pro designs
+
+- `find_design_site_tool(center_x, center_y, design_name=..., ride_type=...)` tries every origin and
+  direction offline: owned land, clearance over paths, track and water, a flat station, and two door
+  tiles whose fronts reach a guest path without crossing the ride. Sites list `station_raise`, doors,
+  path tiles to lay, scenery to clear and `dig_tiles`. Then `coaster_fit_design_tool` at that site
+- The fit tool's own door placement can still pick an enclosed side; check `get_ride_location_tool`
+  and move them with `move_ride_doors_tool(ride_id, entrance_x, entrance_y, exit_x, exit_y)` to the
+  doors the search reported
+- Powered and conveyor rides (car ride, trains, monorail, boats, go-karts, chairlift, log flume, river
+  rapids) lint without chain lifts and with short stations
+- Known bug: Flight of the Phoenix (suspended swinging) failed on its own track at a large-helix piece
+  (type 108) that runs 5-7 tile_z under earlier track; DesignSpec heights for helices are suspect
+- The freeform generator found no closing layout for the classic mini coaster (type 95) anywhere and
+  ignores water as a floor; build small type-95 circuits from a template (station x5, chained climb,
+  two 42/42 U-turns, descent) brute-forced through `lint_design`
 
 ### Learn from the pros (204 bundled RCT2 designs)
 

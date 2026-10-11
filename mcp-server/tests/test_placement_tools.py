@@ -1,6 +1,7 @@
 """Unit tests for stall placement height helpers."""
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from openrct2_mcp.placement_tools import (
@@ -39,7 +40,7 @@ class GuestFootpathTileTests(unittest.TestCase):
 
 
 class ValidateStallSiteTests(unittest.TestCase):
-    def _mock_tile(self, *, slope=0, base_z=112, ownership=True, paths=False, tracks=False):
+    def _mock_tile(self, *, slope=0, base_z=112, ownership=True, paths=False, tracks=False, path_slope=None):
         tile = MagicMock()
         tile.surface.slope = slope
         tile.surface.baseZ = base_z
@@ -47,6 +48,8 @@ class ValidateStallSiteTests(unittest.TestCase):
         tile.paths = paths
         tile.tracks = tracks
         tile.elements = []
+        if path_slope is not False:
+            tile.elements = [SimpleNamespace(type="footpath", isQueue=False, baseZ=base_z, slopeDirection=path_slope)]
         return tile
 
     @patch("openrct2_mcp.placement_tools.assert_tile_adjacent_to_entrance_network", return_value=True)
@@ -94,12 +97,24 @@ class ValidateStallSiteTests(unittest.TestCase):
     def test_rejects_sloped_path(self, _guest, _z, _net):
         game = MagicMock()
         game.world.get_tile.side_effect = lambda t: {
-            (40, 50): self._mock_tile(slope=2),
+            (40, 50): self._mock_tile(slope=2, path_slope=1),
             (41, 50): self._mock_tile(base_z=112),
         }[(t.x, t.y)]
 
         with self.assertRaisesRegex(ValueError, "sloped path"):
             validate_stall_site(game, 41, 50, 40, 50)
+
+    @patch("openrct2_mcp.placement_tools.footpath_base_z_at", return_value=112)
+    @patch("openrct2_mcp.placement_tools.assert_tile_adjacent_to_entrance_network", return_value=True)
+    @patch("openrct2_mcp.placement_tools.is_guest_footpath_tile", return_value=True)
+    def test_accepts_flat_bridge_deck_over_sloped_ground(self, _guest, _net, _z):
+        game = MagicMock()
+        game.world.get_tile.side_effect = lambda t: {
+            (40, 50): self._mock_tile(slope=2, base_z=96, path_slope=None),
+            (41, 50): self._mock_tile(base_z=112, path_slope=False),
+        }[(t.x, t.y)]
+
+        self.assertEqual(validate_stall_site(game, 41, 50, 40, 50), 112)
 
 
 class PlaceStallBesidePathTests(unittest.TestCase):

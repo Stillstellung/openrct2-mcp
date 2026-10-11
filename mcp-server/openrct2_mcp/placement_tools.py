@@ -112,8 +112,16 @@ def validate_stall_site(
             "(queue lines and slopes are invalid stall fronts)"
         )
 
+    from openrct2_mcp.scenery_tools import _footpath_is_sloped
+
     path_tile = tile_data(game, path_x, path_y)
-    if int(path_tile.surface.slope) != 0:
+    guest_paths = [
+        e for e in path_tile.elements
+        if getattr(e, "type", None) == "footpath" and not bool(getattr(e, "isQueue", False))
+    ]
+    # The path's own slope matters, not the ground's: a flat bridge deck over a
+    # slope is a fine stall front.
+    if guest_paths and all(_footpath_is_sloped(e) for e in guest_paths):
         raise ValueError(
             f"Cannot place stall facing sloped path ({path_x},{path_y}) — use a flat walkway"
         )
